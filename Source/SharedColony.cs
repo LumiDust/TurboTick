@@ -358,15 +358,12 @@ public static class SharedColony
         var due = Session.Commands.TakeThrough(Session.Barrier.AppliedTick);
         if (due.Count == 0) return;
         using var random = SimulationRandom.Enter();
-        var self = RoomConnection.LocalPeerId;
-        foreach (var command in due)
-        {
-            // A capture patch runs after vanilla already performed the action, so this peer has applied it
-            // once at the moment of the click. Applying the broadcast on top of that placed two blueprints
-            // and restarted ordered jobs, which is what a single click turned into a divergence.
-            if (self != 0 && command.OriginPeer == self) continue;
-            SharedActions.Apply(command);
-        }
+        // Every peer applies every command, the origin included. This is what Multiplayer does: its
+        // RunCmds drains commands whose tick has arrived and the "issued by self" flag only decides UI
+        // feedback, never whether the command runs. Applying locally at input time and then skipping the
+        // echo gives the origin a different starting tick for anything that unfolds over time - a job the
+        // pawn has already been walking for two ticks - which is the divergence we kept hitting.
+        foreach (var command in due) SharedActions.Apply(command);
     }
 
     public static void Update()
@@ -413,9 +410,16 @@ internal static class TickApplyPatch
         if (!SharedColony.HasSharedWorld) return true;
         var audit = SimulationDiagnostics.Before(__instance);
         if (!SharedColony.TryBeginTick(__instance, out var permit)) return false;
-        // Light must be a function of the tick, not of the frame rate, before anything reads it.
-        SharedLightGrid.Flush();
-        try { __state = new(true, permit, audit, SimulationRandom.Enter()); }
+        try
+        {
+            // Enter the synced random stream first. The refresh below runs lord AI, region rebuilds and room
+            // updates, and any of those that draws from Rand must draw from the shared stream; outside this
+            // scope it would draw from the engine's own unsynced one and the two peers would decide
+            // differently, which is what put colonists in the divergence report with no commands involved.
+            var random = SimulationRandom.Enter();
+            SharedLightGrid.Flush();
+            __state = new(true, permit, audit, random);
+        }
         catch (Exception error) { SharedColony.CancelTick(error); throw; }
         return true;
     }

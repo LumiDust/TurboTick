@@ -32,6 +32,14 @@ public static class SharedActions
 
     // ---------- Capture ----------
 
+    /// <summary>True when this call is the player acting, rather than the simulation calling the same method.
+    ///
+    /// That distinction decides whether a capture patch may cancel the call. Inside a tick the AI and vanilla
+    /// use these methods constantly (forbidding, drafting, designating); cancelling those would break the
+    /// colony on every peer. Outside a tick it is input, and it is safe to defer to the agreed tick so that
+    /// every peer applies it at the same moment.</summary>
+    internal static bool PlayerActing => !Applying && SharedColony.Session.AcceptsInput && !SharedColony.TickExecuting;
+
     public static void CaptureDesignation(Designation designation)
     {
         if (Applying || !SharedColony.Session.AcceptsInput) return;
@@ -75,7 +83,14 @@ public static class SharedActions
     public static void CaptureOrder(Pawn pawn, bool result)
     {
         if (!result || Applying || !SharedColony.Session.AcceptsInput || pawn?.jobs?.curJob is not { } job) return;
-        if (job.def == null) return;
+        CaptureOrderJob(pawn, job);
+    }
+
+    /// <summary>Encodes an order from the job itself, so it can be captured before vanilla runs. A deferred
+    /// capture must not read <c>curJob</c>, because the job has not been taken yet.</summary>
+    public static void CaptureOrderJob(Pawn pawn, Job job)
+    {
+        if (Applying || !SharedColony.Session.AcceptsInput || pawn is null || job?.def is null) return;
         var a = job.targetA;
         var b = job.targetB;
         Publish(CommandCodec.OrderCommand(pawn.thingIDNumber, job.def.defName,
@@ -394,43 +409,82 @@ public static class SharedActions
 }
 
 // ---------- Harmony Capture Patches ----------
+//
+// Every patch here follows the model Multiplayer uses: a player's action is forwarded to the server and
+// the local vanilla call is cancelled, so the command is applied when its tick arrives - on every peer,
+// the one that clicked included. Vanilla's own calls during a tick are left alone, because those run
+// identically on every peer anyway and cancelling them would drop them on the origin only.
+//
+// The earlier shape (let vanilla run, then skip the echo) applied the action twice when the echo was not
+// skipped and gave the origin a two-tick head start when it was. Both showed up as divergence.
+
+/// <summary>Shape shared by the simple patches: capture the arguments, cancel the local call.</summary>
+internal static class CapturePrefix
+{
+    internal static bool Defer(bool captured)
+    {
+        // false means "the player acted": vanilla must not also perform it.
+        return !captured;
+    }
+}
 
 [HarmonyPatch(typeof(DesignationManager), nameof(DesignationManager.AddDesignation))]
 internal static class DesignationCapturePatch
 {
-    private static void Postfix(Designation newDes) => SharedActions.CaptureDesignation(newDes);
+    private static bool Prefix(Designation newDes)
+    {
+        if (!SharedActions.PlayerActing) return true;
+        SharedActions.CaptureDesignation(newDes);
+        return false;
+    }
 }
 
 [HarmonyPatch(typeof(DesignationManager), nameof(DesignationManager.RemoveDesignation))]
 internal static class DesignationRemoveCapturePatch
 {
-    private static void Postfix(Designation des) => SharedActions.CaptureRemoveDesignation(des);
+    private static bool Prefix(Designation des)
+    {
+        if (!SharedActions.PlayerActing) return true;
+        SharedActions.CaptureRemoveDesignation(des);
+        return false;
+    }
 }
 
 [HarmonyPatch(typeof(GenConstruct), nameof(GenConstruct.PlaceBlueprintForBuild))]
 internal static class BlueprintCapturePatch
 {
-    private static void Postfix(BuildableDef sourceDef, IntVec3 center, Map map, Rot4 rotation, ThingDef stuff) =>
+    private static bool Prefix(BuildableDef sourceDef, IntVec3 center, Map map, Rot4 rotation, ThingDef stuff,
+        ref Blueprint __result)
+    {
+        if (!SharedActions.PlayerActing || sourceDef is null || map is null) return true;
         SharedActions.CaptureBlueprint(sourceDef, stuff, center, map, rotation);
+        __result = null!;
+        return false;
+    }
 }
 
-// Blueprint inherits Destroy from ThingWithComps in both 1.7 reference and installed game assemblies.
-// Harmony resolves declared methods; target the declaring type and keep capture blueprint-only.
+/// <summary>Cancelling a blueprint or frame is a removal the player asked for; the simulation also destroys
+/// things during a tick, and those must run locally or the colony stalls.</summary>
 [HarmonyPatch(typeof(ThingWithComps), nameof(ThingWithComps.Destroy), new[] { typeof(DestroyMode) })]
 internal static class BlueprintCancelCapturePatch
 {
-    private static void Prefix(ThingWithComps __instance, DestroyMode mode)
+    private static bool Prefix(ThingWithComps __instance, DestroyMode mode)
     {
-        if (__instance is Blueprint && mode == DestroyMode.Cancel) SharedActions.CaptureCancelThing(__instance);
+        if (mode != DestroyMode.Cancel || __instance is not Blueprint) return true;
+        if (!SharedActions.PlayerActing) return true;
+        SharedActions.CaptureCancelThing(__instance);
+        return false;
     }
 }
 
 [HarmonyPatch(typeof(Frame), nameof(Frame.Destroy))]
 internal static class FrameCancelCapturePatch
 {
-    private static void Prefix(Frame __instance, DestroyMode mode)
+    private static bool Prefix(Frame __instance, DestroyMode mode)
     {
-        if (mode == DestroyMode.Cancel) SharedActions.CaptureCancelThing(__instance);
+        if (mode != DestroyMode.Cancel || !SharedActions.PlayerActing) return true;
+        SharedActions.CaptureCancelThing(__instance);
+        return false;
     }
 }
 
@@ -440,26 +494,41 @@ internal static class DraftCapturePatch
     private static readonly AccessTools.FieldRef<Pawn_DraftController, Pawn> PawnRef =
         AccessTools.FieldRefAccess<Pawn_DraftController, Pawn>("pawn");
 
-    private static void Postfix(Pawn_DraftController __instance, bool value) =>
+    private static bool Prefix(Pawn_DraftController __instance, bool value)
+    {
+        if (!SharedActions.PlayerActing) return true;
         SharedActions.CaptureDraft(PawnRef(__instance), value);
+        return false;
+    }
 }
 
+/// <summary>An order is captured from its argument, because the job has not been taken yet.</summary>
 [HarmonyPatch(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.TryTakeOrderedJob))]
 internal static class OrderCapturePatch
 {
     private static readonly AccessTools.FieldRef<Pawn_JobTracker, Pawn> PawnRef =
         AccessTools.FieldRefAccess<Pawn_JobTracker, Pawn>("pawn");
 
-    private static void Postfix(Pawn_JobTracker __instance, bool __result)
+    private static bool Prefix(Pawn_JobTracker __instance, Job job, ref bool __result)
     {
-        if (__result) SharedActions.CaptureOrder(PawnRef(__instance), true);
+        if (!SharedActions.PlayerActing) return true;
+        var pawn = PawnRef(__instance);
+        if (pawn is null || job?.def is null) return true;
+        SharedActions.CaptureOrderJob(pawn, job);
+        __result = true;
+        return false;
     }
 }
 
 [HarmonyPatch(typeof(ForbidUtility), nameof(ForbidUtility.SetForbidden))]
 internal static class ForbidCapturePatch
 {
-    private static void Postfix(Thing t, bool value) => SharedActions.CaptureForbid(t, value);
+    private static bool Prefix(Thing t, bool value)
+    {
+        if (!SharedActions.PlayerActing || t is null) return true;
+        SharedActions.CaptureForbid(t, value);
+        return false;
+    }
 }
 
 [HarmonyPatch(typeof(Pawn_WorkSettings), nameof(Pawn_WorkSettings.SetPriority))]
@@ -468,39 +537,68 @@ internal static class PriorityCapturePatch
     private static readonly AccessTools.FieldRef<Pawn_WorkSettings, Pawn> PawnRef =
         AccessTools.FieldRefAccess<Pawn_WorkSettings, Pawn>("pawn");
 
-    private static void Postfix(Pawn_WorkSettings __instance, WorkTypeDef w, int priority) =>
+    private static bool Prefix(Pawn_WorkSettings __instance, WorkTypeDef w, int priority)
+    {
+        if (!SharedActions.PlayerActing || w is null) return true;
         SharedActions.CapturePriority(PawnRef(__instance), w, priority);
+        return false;
+    }
 }
 
 [HarmonyPatch(typeof(Zone), nameof(Zone.AddCell))]
 internal static class ZoneAddCellCapturePatch
 {
-    private static void Postfix(Zone __instance, IntVec3 c) => SharedActions.CaptureZoneCell(__instance, c, add: true);
+    private static bool Prefix(Zone __instance, IntVec3 c)
+    {
+        if (!SharedActions.PlayerActing) return true;
+        SharedActions.CaptureZoneCell(__instance, c, add: true);
+        return false;
+    }
 }
 
 [HarmonyPatch(typeof(Zone), nameof(Zone.RemoveCell))]
 internal static class ZoneRemoveCellCapturePatch
 {
-    private static void Postfix(Zone __instance, IntVec3 c) => SharedActions.CaptureZoneCell(__instance, c, add: false);
+    private static bool Prefix(Zone __instance, IntVec3 c)
+    {
+        if (!SharedActions.PlayerActing) return true;
+        SharedActions.CaptureZoneCell(__instance, c, add: false);
+        return false;
+    }
 }
 
 // Delete() is the user-facing wrapper; Delete(bool) is a separate virtual overload.
 [HarmonyPatch(typeof(Zone), nameof(Zone.Delete), new Type[0])]
 internal static class ZoneDeleteCapturePatch
 {
-    private static void Prefix(Zone __instance) => SharedActions.CaptureZoneDelete(__instance);
+    private static bool Prefix(Zone __instance)
+    {
+        if (!SharedActions.PlayerActing) return true;
+        SharedActions.CaptureZoneDelete(__instance);
+        return false;
+    }
 }
 
 [HarmonyPatch(typeof(BillStack), nameof(BillStack.AddBill))]
 internal static class BillAddCapturePatch
 {
-    private static void Postfix(BillStack __instance, Bill bill) => SharedActions.CaptureBillAdd(__instance, bill);
+    private static bool Prefix(BillStack __instance, Bill bill)
+    {
+        if (!SharedActions.PlayerActing || bill?.recipe is null) return true;
+        SharedActions.CaptureBillAdd(__instance, bill);
+        return false;
+    }
 }
 
 [HarmonyPatch(typeof(BillStack), nameof(BillStack.Delete))]
 internal static class BillDeleteCapturePatch
 {
-    private static void Prefix(BillStack __instance, Bill bill) => SharedActions.CaptureBillDelete(__instance, bill);
+    private static bool Prefix(BillStack __instance, Bill bill)
+    {
+        if (!SharedActions.PlayerActing || bill is null) return true;
+        SharedActions.CaptureBillDelete(__instance, bill);
+        return false;
+    }
 }
 
 [HarmonyPatch(typeof(Pawn_PlayerSettings), nameof(Pawn_PlayerSettings.AreaRestrictionInPawnCurrentMap), MethodType.Setter)]
@@ -509,13 +607,21 @@ internal static class AreaAssignCapturePatch
     private static readonly AccessTools.FieldRef<Pawn_PlayerSettings, Pawn> PawnRef =
         AccessTools.FieldRefAccess<Pawn_PlayerSettings, Pawn>("pawn");
 
-    private static void Postfix(Pawn_PlayerSettings __instance, Area value) =>
+    private static bool Prefix(Pawn_PlayerSettings __instance, Area value)
+    {
+        if (!SharedActions.PlayerActing) return true;
         SharedActions.CaptureAreaAssign(PawnRef(__instance), value);
+        return false;
+    }
 }
 
 [HarmonyPatch(typeof(CompTransporter), nameof(CompTransporter.AddToTheToLoadList))]
 internal static class TransportCapturePatch
 {
-    private static void Postfix(CompTransporter __instance, TransferableOneWay t, int count) =>
+    private static bool Prefix(CompTransporter __instance, TransferableOneWay t, int count)
+    {
+        if (!SharedActions.PlayerActing || t is null) return true;
         SharedActions.CaptureTransport(__instance, t, count);
+        return false;
+    }
 }
