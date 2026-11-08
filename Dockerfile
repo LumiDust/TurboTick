@@ -4,6 +4,8 @@ FROM ubuntu:24.04
 
 ARG TARGETARCH
 ARG DEBIAN_FRONTEND=noninteractive
+# Supplied by the release pipeline so the image records the version it actually contains.
+ARG TURBOTICK_MOD_VERSION
 RUN test "$TARGETARCH" = amd64 \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -31,12 +33,13 @@ COPY artifacts/container-mod/TurboTick/ /opt/turbotick/mod/TurboTick/
 COPY scripts/steamcmd/install-server.sh /opt/turbotick/install-server.sh
 COPY deploy/container/entrypoint.sh deploy/container/steamcmd.sh deploy/container/container.py /opt/turbotick/
 COPY LICENSE /opt/turbotick/LICENSE
+ENV TURBOTICK_MOD_VERSION=${TURBOTICK_MOD_VERSION}
 RUN python3 /opt/turbotick/container.py manifest /opt/turbotick/mod/TurboTick /opt/turbotick/payload.sha256.json \
     && chmod -R a=rX /opt/turbotick /opt/steamcmd-seed \
     && chmod a+rx /opt/turbotick/entrypoint.sh /opt/turbotick/steamcmd.sh /opt/turbotick/install-server.sh
 
 LABEL org.opencontainers.image.title="TurboTick headless RimWorld host" \
-      org.opencontainers.image.version="0.5.2" \
+      org.opencontainers.image.version="${TURBOTICK_MOD_VERSION}" \
       org.opencontainers.image.source="https://github.com/LumiDust/TurboTick" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.description="Linux amd64 native RimWorld host; game and Harmony installed separately"

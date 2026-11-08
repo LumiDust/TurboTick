@@ -2,7 +2,7 @@ name: turbotick-headless
 
 services:
   headless:
-    image: ghcr.io/lumidust/turbotick-headless:0.5.2
+    image: ghcr.io/lumidust/turbotick-headless:0.6.1
     platform: linux/amd64
     user: "${TURBOTICK_UID:-10001}:${TURBOTICK_GID:-10001}"
     command: ["run"]
@@ -44,7 +44,7 @@ services:
           create_host_path: false
 
   installer:
-    image: ghcr.io/lumidust/turbotick-headless:0.5.2
+    image: ghcr.io/lumidust/turbotick-headless:0.6.1
     platform: linux/amd64
     user: "${TURBOTICK_UID:-10001}:${TURBOTICK_GID:-10001}"
     profiles: ["setup"]

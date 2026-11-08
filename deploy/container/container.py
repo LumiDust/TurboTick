@@ -11,7 +11,10 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
-MOD_VERSION = "0.5.2"
+# Expected TurboTick version, supplied by the release pipeline. This used to be a literal ("0.5.2"), so
+# every build after 0.5.2 failed here even though the image and the mod came from the same artifact. Empty
+# means "accept whatever the mod declares" - the payload inventory below is what actually guards integrity.
+MOD_VERSION = os.environ.get("TURBOTICK_MOD_VERSION", "").strip()
 DLLS = ("TurboTick.dll", "TurboTick.Networking.dll", "TurboTick.Simulation.dll")
 
 
@@ -40,13 +43,19 @@ def inventory(root):
     return entries
 
 
+def mod_version(root):
+    return xml(root / "About/About.xml").findtext("modVersion", "").strip()
+
+
 def mod_layout(root):
     about = xml(root / "About/About.xml")
     if about.findtext("packageId", "").strip().lower() != "lumidust.turbotick":
         fail(f"incorrect TurboTick packageId: {root}")
-    version = about.findtext("modVersion", "").strip()
-    if version != MOD_VERSION:
+    version = mod_version(root)
+    if MOD_VERSION and version != MOD_VERSION:
         fail(f"TurboTick version {version!r}; image requires {MOD_VERSION}; run install with the matching image")
+    if not version:
+        fail(f"TurboTick package declares no modVersion: {root}")
     folders = xml(root / "LoadFolders.xml")
     loaded = [n.text.strip() for n in folders.findall("v1.7/li") if n.text]
     if not {"/", "1.7"}.issubset(loaded):
@@ -207,7 +216,7 @@ def main():
         root, manifest = paths
         mod_layout(root)
         manifest.write_text(json.dumps(inventory(root), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(f"[container] manifest: {len(inventory(root))} payload entries, TurboTick {MOD_VERSION}")
+        print(f"[container] manifest: {len(inventory(root))} payload entries, TurboTick {mod_version(root)}")
     elif command == "verify":
         verify(*paths)
     elif command == "writable":
@@ -219,7 +228,7 @@ def main():
         verify(game / "Mods/TurboTick", manifest)
         harmony(game)
         profile(prof)
-        print(f"[container] preflight OK: RimWorld {version}, TurboTick {MOD_VERSION}, complete payload verified")
+        print(f"[container] preflight OK: RimWorld {version}, TurboTick {mod_version(game / 'Mods/TurboTick')}, complete payload verified")
     elif command == "profile":
         game, prof = paths
         profile(prof, game_layout(game))

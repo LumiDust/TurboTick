@@ -2,7 +2,7 @@
 # Offline contract tests: uses only a locally built image, fake game/Harmony/
 # SteamCMD, disposable named volumes, and --network none. Never touches live data.
 set -euo pipefail
-image="${1:-ghcr.io/lumidust/turbotick-headless:0.5.2}"
+image="${1:-ghcr.io/lumidust/turbotick-headless:0.6.1}"
 command -v docker >/dev/null || { echo 'docker is required' >&2; exit 1; }
 docker image inspect "$image" >/dev/null
 prefix="turbotick-container-test-$$-$(date +%s)"
@@ -103,7 +103,14 @@ pass 'run argv is literal; fixed HOME/profile/state; no Steam cache/account; gam
 
 # Refuse historical or tampered packages before executing the fake game.
 admin <<'MUTATE'
-sed -i 's/<modVersion>0.5.2<\//<modVersion>0.5.1<\//' /game/Mods/TurboTick/About/About.xml
+python3 - <<'PY'
+import pathlib, re
+p = pathlib.Path('/game/Mods/TurboTick/About/About.xml')
+t = p.read_text(encoding='utf-8')
+# Rewrite whatever version the package declares: pinning the literal here meant the mutation became a
+# no-op on the next release and the refusal test asserted nothing.
+p.write_text(re.sub(r'(<modVersion>)[^<]*(</modVersion>)', r'\g<1>0.0.0-other\g<2>', t, count=1), encoding='utf-8')
+PY
 MUTATE
 expect_exit 1 docker run --rm "${base[@]}" "${ro[@]}" "$image" run --fixture-exit=0
 # skip-download must never invoke a SteamCMD, even if one is named in env.
