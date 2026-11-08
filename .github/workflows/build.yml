@@ -46,6 +46,7 @@ jobs:
           name: TurboTick-${{ steps.version.outputs.value }}-rimworld-1.7
           path: |
             artifacts/TurboTick-${{ steps.version.outputs.value }}-mod-1.7.zip
+            artifacts/TurboTick-${{ steps.version.outputs.value }}-coordinator-linux-x64
             artifacts/TurboTick-${{ steps.version.outputs.value }}-headless-installer.zip
             artifacts/SHA256SUMS
           if-no-files-found: error
