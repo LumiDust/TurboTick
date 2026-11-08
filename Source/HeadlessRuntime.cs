@@ -39,7 +39,20 @@ internal static class HeadlessRuntime
     private static string state = "starting";
     private static string? failure;
     internal static bool StopRequested => Volatile.Read(ref stopRequested) != 0;
-    internal static bool HoldLocalTicks => Active && (!SharedColony.Gating || stopping);
+
+    /// <summary>Whether this process also simulates the colony.
+    ///
+    /// False in a coordinator room (TURBOTICK_LOCKSTEP=1): the players simulate and the server only
+    /// orders commands and paces the timeline. A resident simulator there would be one more copy of the
+    /// colony to keep in sync - N players become N+1 - without adding any capability, because rendering
+    /// works fine on a peer that ticks.
+    ///
+    /// Kept switchable because the display-replica path still needs it, and because retiring the resident
+    /// simulator is the change under test.</summary>
+    internal static bool ResidentSimulation => !Lockstep;
+
+    /// <summary>A coordinator holds its own colony forever; only a resident simulator may tick one.</summary>
+    internal static bool HoldLocalTicks => Active && (!ResidentSimulation || !SharedColony.Gating || stopping);
 
     internal static void Start()
     {
@@ -49,7 +62,9 @@ internal static class HeadlessRuntime
         {
             if (!GenCommandLine.CommandLineArgPassed("headless"))
                 throw new ArgumentException("-turbotick-server requires -headless.");
-            if (!PatchInstaller.AllCritical || PatchInstaller.Status.Any(p => !p.Value))
+            // A coordinator never runs a colony, so the gameplay patches are irrelevant to it; requiring
+            // them would fail a host that is only relaying and pacing.
+            if (ResidentSimulation && (!PatchInstaller.AllCritical || PatchInstaller.Status.Any(p => !p.Value)))
                 throw new InvalidOperationException("Dedicated simulation requires every gameplay patch to be installed.");
             dataDirectory = Path.GetFullPath(Option("data") ?? Path.Combine(GenFilePaths.SaveDataFolderPath, "TurboTickServer"));
             Directory.CreateDirectory(dataDirectory);
@@ -96,7 +111,7 @@ internal static class HeadlessRuntime
                     var hello = CompatibilityManifest.Build(inputs, "DedicatedSimulation", export, CancellationToken.None);
                     candidate = new DedicatedServer(new ServerOptions(host, port, dataDirectory, hello.GameVersion,
                         hello.ModHash, !controllerOnly, AdminPassword: adminPassword)
-                    { RequireSimulation = true, Authoritative = !Lockstep, Lockstep = Lockstep });
+                    { RequireSimulation = ResidentSimulation, Authoritative = ResidentSimulation, Lockstep = Lockstep });
                     await candidate.StartAsync().ConfigureAwait(false);
                     // A persisted room from another modpack must not be silently overwritten or simulated.
                     if (candidate.LockedGameVersion != hello.GameVersion || candidate.LockedModHash != hello.ModHash)
@@ -125,7 +140,9 @@ internal static class HeadlessRuntime
 
     private static void ConnectSimulation()
     {
-        if (server is null || stopping) return;
+        // A coordinator owns no colony, so it has nothing to simulate and must not register as a peer:
+        // the resulting N+1'th copy would be exactly the state the room would then have to keep in sync.
+        if (!ResidentSimulation || server is null || stopping) return;
         RoomConnection.Connect(new TurboTickSettings
         {
             ServerHost = "127.0.0.1", ServerPort = server.Port.ToString(CultureInfo.InvariantCulture),
@@ -258,8 +275,10 @@ internal static class HeadlessRuntime
         if (RoomConnection.Client?.IsConnected == true)
         {
             attached = true;
-            if (!server.GameRunning && initialSave is not null && !initialLoadRequested && !RoomConnection.Busy
-                && !LongEventHandler.AnyEventNowOrWaiting)
+            // Only a resident simulator loads a colony of its own. A coordinator holds no world state: the
+            // host player publishes it and the server stores the bytes.
+            if (ResidentSimulation && !server.GameRunning && initialSave is not null && !initialLoadRequested
+                && !RoomConnection.Busy && !LongEventHandler.AnyEventNowOrWaiting)
             {
                 initialLoadRequested = true;
                 if (!File.Exists(GenFilePaths.FilePathForSavedGame(initialSave)))
@@ -300,7 +319,7 @@ internal static class HeadlessRuntime
 
     internal static void ReportProgress()
     {
-        if (!Active || server is null) return;
+        if (!Active || server is null || !ResidentSimulation) return;
         server.ReportSimulationProgress(SharedColony.Session.Epoch, SharedColony.Session.Barrier.AppliedTick,
             !stopping && Volatile.Read(ref stopRequested) == 0 && SharedColony.Gating
             && TurboState.Authority.SessionConnected && RoomConnection.Client?.IsConnected == true

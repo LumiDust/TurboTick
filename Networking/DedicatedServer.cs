@@ -347,6 +347,12 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                 _checkpointOwnerId = peer.Id;
             }
             else if (_checkpointOwnerId is null && !_options.RequireSimulation) _checkpointOwnerId = peer.Id;
+            // A coordinator has no colony to save, so the checkpoint duty has to live on a player. The host
+            // is the natural owner: it is the peer that published the world and the one that keeps editing
+            // authority. Without this the room would run with nobody able to checkpoint, and a restart would
+            // resume from the initial publication only.
+            else if (_checkpointOwnerId is null && _options.Lockstep && !_options.RequireSimulation && _hostId == peer.Id)
+                _checkpointOwnerId = peer.Id;
             peer.Queue(new WireMessage
             {
                 Type = "Welcome", Policy = _policy, CanEdit = peer.CanEdit, IsHost = _hostId == peer.Id,
@@ -527,6 +533,9 @@ public sealed partial class DedicatedServer : IAsyncDisposable
             if (!_options.EveryoneCanEdit) _controllerId = peer.Id;
             RefreshEditingRoles();
             if (!GameRunning && !_options.RequireSimulation && _simulationPeer is null) _checkpointOwnerId = peer.Id;
+            // Claiming the host role also takes the checkpoint duty in a coordinator room, so the peer that
+            // owns the world is the one that keeps saving it.
+            else if (_checkpointOwnerId is null && _options.Lockstep && !_options.RequireSimulation) _checkpointOwnerId = peer.Id;
             BroadcastRoles();
             peer.Queue(new WireMessage { Type = "HostClaimed", RequestId = message.RequestId, IsHost = true });
         }

@@ -264,6 +264,10 @@ internal static class RoomConnection
                         SetStatus("正在载入共享存档：" + saveName);
                         SharedColony.BeginWorldLoad(saveName);
                         GameDataSaveLoader.LoadGame(saveName);
+                        // Loading has consumed the copy; keep Saves/ and the cache bounded so a long session
+                        // does not fill the drive with one opaque file per checkpoint.
+                        WorldFiles.PruneSaves();
+                        WorldFiles.PruneCache();
                     }
                     catch (Exception error) { SharedColony.OnWorldLoadFailed(error.Message); SetStatus("载入共享存档失败：" + error.Message); }
                 });
