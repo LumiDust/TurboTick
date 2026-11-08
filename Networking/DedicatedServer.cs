@@ -379,7 +379,14 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                     && _peers.TryGetValue(owner, out var ownerPeer) && ownerPeer.Joined && !HistoryTruncated)
                     ownerPeer.TryQueue(new WireMessage { Type = "CheckpointNeeded" });
                 else
+                {
+                    // SendCatchUp is delivered here and now, so the peer must not also stay on the waiting
+                    // list: ExpirePendingJoiners would resend it ten seconds later and the client would
+                    // reload the colony a second time. That second load is what made a room look like it
+                    // kept re-entering itself.
+                    lock (_pendingJoiners) _pendingJoiners.Remove(peer.Id);
                     SendCatchUp(peer); // first peer, no owner, or an incomplete history it must be told about
+                }
             }
         }
         finally { _stateGate.Release(); }

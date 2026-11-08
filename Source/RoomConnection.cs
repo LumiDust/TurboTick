@@ -90,10 +90,12 @@ internal static class RoomConnection
             AuthoritativeRoom = session.RoomAuthoritative;
             LockstepRoom = session.Lockstep;
             AuthoritativeReplica.OnWorldStarted(session);
-            // The resident already simulates that world. Reloading on every Started message would loop
-            // load -> publish checkpoint -> Started forever and stall the timeline.
-            if (HeadlessRuntime.Active && SharedColony.Session.Phase == Simulation.SharedPhase.Playing
-                && SharedColony.Session.WorldId == manifest.Id)
+            // Reloading on every Started message loops load -> publish checkpoint -> Started forever and
+            // stalls the timeline. This applies to a player peer as much as to the resident: the second
+            // catch-up the server used to send made the colony reload itself about every ten seconds, which
+            // a player sees as being thrown back into the world after leaving it.
+            if (SharedColony.Session.Phase == Simulation.SharedPhase.Playing
+                && SharedColony.Session.WorldId == manifest.Id && SharedColony.Session.Epoch == session.Epoch)
             {
                 Status = "已在此世界运行";
                 return;
