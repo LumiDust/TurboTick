@@ -70,7 +70,9 @@ jobs:
         run: |
           set -euo pipefail
           cd artifacts/runtime-packages
-          sha256sum -c SHA256SUMS
+          # SHA256SUMS also covers the coordinator binary, which this job does not download: the image only
+          # needs the mod bytes. Verify everything that is present and ignore the rest.
+          sha256sum -c SHA256SUMS --ignore-missing
           cd ../..
           mkdir -p artifacts/container-mod
           unzip -q "artifacts/runtime-packages/TurboTick-$VERSION-mod-1.7.zip" -d artifacts/container-mod
@@ -147,26 +149,55 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             artifacts/TurboTick-${{ needs.build-test-package.outputs.version }}-mod-1.7.zip
+            artifacts/TurboTick-${{ needs.build-test-package.outputs.version }}-coordinator-linux-x64
             artifacts/TurboTick-${{ needs.build-test-package.outputs.version }}-headless-installer.zip
             artifacts/SHA256SUMS
           body: |
-            ## Headless 专服统一部署
+            ## 协调器专服
 
-            - 退役旧独立 .NET 网络服入口；共享协议和网络核心继续由 headless 宿主使用。
-            - 新增 `turbotick-headless` 容器，安装与运行分开；运行容器不挂载 Steam 登录缓存，也不自动更新。
-            - 镜像使用同次流水线的客户端 Mod 字节；游戏、Harmony、存档和认证缓存不进入公开镜像。
-            - 详细部署说明覆盖 Steam Guard、目录权限、首次安装、启动、迁移、备份、升级与回滚。
-            - 当前镜像仅支持 Linux amd64，原生 Windows/Linux 部署方式保留；游戏仍为客户端和服务器共同执行的锁步模型。
+            - 专服不再模拟殖民地：每个玩家在本地完整模拟，动画与寻路原生正确，需要同步的份数从 N+1 回到 N。
+            - 专服改为自包含单文件，**不再需要安装 RimWorld**，也不再加载游戏程序集。
+            - `deploy/turbotick-coordinator.service` 是可直接使用的 systemd 单元。
 
-            本版为容器预览。容器安装/运行隔离、健康检查和退出流程已测试；新随机存档双端长跑仍出现锁步分叉，故障会挂起时间线。不要把容器健康视为任意存档长期一致的证明；先在独立数据目录验证，稳定版 latest 不随此预览更新。
+            ## 命令路径修复
+
+            - lockstep 房间把命令回显给发起者。原先跳过发起者，导致按按钮的人反而是唯一不执行自己命令的人，两端在小人位置上迅速分开。
+            - 命令改盖在所有 peer 都尚未到达的 tick，避免落在已被执行过的过去而被序号规则当作回退丢弃。
+            - 服务端命令白名单补上 `thing-state`；此前通用 gizmo 同步的每条命令都被当作 `UnknownCommand` 丢弃，功能从未生效。
+
+            ## 确定性
+
+            - 把剩余的按帧模拟工作钉到 tick：天气、活动区、MapComponent、WorldComponent、GameComponent。
+            - 共享世界强制关闭「快速生态」开发选项（每 tick 前进 2000，会直接破坏时间线）。
+            - 不再让 GameComponent 闸门停掉 TurboTick 自己的组件——那是处理网络消息的泵。
+
+            ## 节拍与恢复
+
+            - 加入者的进度按将载入的检查点播种，规范化重载时回拨所有 peer 的进度，消除每秒数百 tick 的快进重放。
+            - 有人加入时全体从同一检查点重载，让长期运行的进程与刚反序列化的进程从同一加载点开始。
+            - 分叉时先暂停并指出字段（位置／血量／工作／物体／标记／随机流），而不是静默回滚。
+            - 暂停时保持 Playing：Faulted 会拒绝输入，原先「先留在这里」等于把玩家锁在一个仍在推进的世界外面。
+
+            ## 验证
+
+            两台互不相关的 headless 客户端、同一份游戏与 Mod 字节：
+
+            - 无输入 14 900 tick、脚本化操作 345 次 20 000+ tick，均为零分叉。
+            - 晚加入间隔 152 秒：仅一次规范化重载，之后零分叉。
+            - 断线重连：零分叉至 31 200 tick。
+            - 房主退出：剩余玩家继续推进并接管房主。
+            - 63 条整对象 Scribe 状态走完采样→下发→应用，零分叉。
+            - 单元测试 62 项、网络协议测试 29 组全绿。
+
+            已确认的限制：真实点击事件到 gizmo 委托这一跳无法自动化；第三方 Mod 若使用 `UnityEngine.Random` 无法被确定化。
 
             ## 下载
 
-            - `mod-1.7.zip`：所有玩家和 headless 服务器使用的同版 Mod。
-            - `headless-installer.zip`：同版 Mod、SteamCMD 脚本、Compose 和部署模板。
-            - `SHA256SUMS`：两个运行包的校验值。
+            - `mod-1.7.zip`：所有玩家使用，必须与专服同版本（0.6.1 / 协议 v5）。
+            - `coordinator-linux-x64`：专服，自包含单文件，目标机只需 x64 Linux。
+            - `headless-installer.zip`：0.6.0 的 headless 游戏托管部署，仅用于回退。
+            - `SHA256SUMS`：全部运行包的校验值。
 
-            Docker：`ghcr.io/lumidust/turbotick-headless:${{ needs.build-test-package.outputs.version }}`
 
             RimWorld 1.7；TurboTick ${{ needs.build-test-package.outputs.version }}；协议 v4。所有参与端更新为同一份包，并保持完整游戏 build、DLC、模组顺序及配置一致。历史 0.5.1 及更早附件与旧镜像保留用于回退，不再发布新的 `server.zip`。
 
