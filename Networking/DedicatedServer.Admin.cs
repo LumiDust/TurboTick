@@ -114,13 +114,16 @@ public sealed partial class DedicatedServer
             }
             var backupId = DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffffffZ", System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N");
             var archiveRoot = Path.Combine(_options.DataDirectory, "Archives");
-            var preparing = Path.Combine(archiveRoot, ".preparing-" + backupId);
+            // Staging lives beside the data files, not inside Archives: a failed archival must never leave
+            // something in the archive directory that looks like an archive to an operator. It also means a
+            // cleanup that cannot delete the tree (a transient Windows sharing violation, an indexer holding
+            // a handle) degrades to one stray dot-directory instead of a bogus archived room.
+            var preparing = Path.Combine(_options.DataDirectory, ".preparing-" + backupId);
             var archive = Path.Combine(archiveRoot, backupId);
             var storeId = Guid.NewGuid().ToString("N");
             var committed = false;
             try
             {
-                Directory.CreateDirectory(archiveRoot);
                 Directory.CreateDirectory(preparing);
                 // Network mutation, tick advancement and every server-state write are paused by this gate.
                 // Copy all durable files except Archives, including every snapshot object and manifest.
@@ -128,6 +131,8 @@ public sealed partial class DedicatedServer
                 await AtomicFile.WriteJsonAsync(Path.Combine(preparing, "server-state.json"),
                     CaptureState(CurrentPolicy, LockedGameVersion, LockedModHash), peer.Token).ConfigureAwait(false);
                 peer.Token.ThrowIfCancellationRequested();
+                // Created last, so a failed archival does not even add an empty Archives directory.
+                Directory.CreateDirectory(archiveRoot);
                 Directory.Move(preparing, archive);
                 var freshStore = new SnapshotStore(SnapshotDirectory(storeId));
                 var freshPolicy = new SpeedPolicy();
@@ -161,14 +166,37 @@ public sealed partial class DedicatedServer
             finally
             {
                 // These are exclusively server-generated staging paths. A completed archive is kept even if commit failed.
-                if (!committed && Directory.Exists(preparing))
-                    try { Directory.Delete(preparing, recursive: true); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                if (!committed) CleanupStaging(preparing);
             }
         }
         finally
         {
             Volatile.Write(ref _archiveInProgress, 0);
             _stateGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Removes a failed archival's staging tree. Windows can transiently refuse to delete a directory right
+    /// after its handles close, so a single attempt silently left a `.preparing-*` tree behind; retry briefly
+    /// and, if it still fails, say so instead of losing the fact.
+    /// </summary>
+    private static void CleanupStaging(string preparing)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(preparing)) return;
+                Directory.Delete(preparing, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == 4)
+                    Console.WriteLine($"[server] staging directory could not be removed, delete it manually: {preparing} ({ex.GetType().Name})");
+                else Thread.Sleep(50);
+            }
         }
     }
 
@@ -179,6 +207,7 @@ public sealed partial class DedicatedServer
             ct.ThrowIfCancellationRequested();
             var name = Path.GetFileName(entry);
             if (root && (string.Equals(name, "Archives", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith(".preparing-", StringComparison.OrdinalIgnoreCase)
                 || name is "headless.lock" or "deployment.lock" or "headless-status.json" or "headless-status.json.tmp")) continue;
             var attributes = File.GetAttributes(entry);
             // Never follow local symlinks out of the configured persistent data directory.

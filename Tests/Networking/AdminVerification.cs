@@ -135,12 +135,34 @@ internal static class AdminVerification
         await using var admin = new DedicatedAdminClient();
         await admin.ConnectAsync("127.0.0.1", server.Port, secret);
         NetworkException error;
-        await using (var locked = new FileStream(Path.Combine(directory, "locked-persistent.dat"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+        // The injection has to make the archival copy fail on every platform, and the two platforms enforce
+        // different things. Windows honours FileShare.None, so an exclusively opened file blocks the copy.
+        // Unix happily reads a file that another handle has open, so the same injection would let the
+        // archive succeed and the assertions below would check nothing - there an unreadable file fails the
+        // copy instead, and both surfaces arrive as ArchiveFailed.
+        var blockingPath = Path.Combine(directory, "locked-persistent.dat");
+        await File.WriteAllTextAsync(blockingPath, "a durable file held exclusively by another operation").ConfigureAwait(false);
+        FileStream? exclusive = null;
+        if (OperatingSystem.IsWindows())
+            exclusive = new FileStream(blockingPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        else
+            File.SetUnixFileMode(blockingPath, UnixFileMode.None);
+        try
         {
-            await locked.WriteAsync("a durable file held exclusively by another operation"u8.ToArray());
-            error = await Throws<NetworkException>(() => admin.ResetRoomAsync(hello with { ModHash = "replacement" }));
+            error = await Throws<NetworkException>(() => admin.ResetRoomAsync(hello with { ModHash = "replacement" })).ConfigureAwait(false);
         }
-        Assert(!Directory.EnumerateFileSystemEntries(Path.Combine(directory, "Archives")).Any(), "Failed partial archive was exposed or retained staging data.");
+        finally
+        {
+            exclusive?.Dispose();
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(blockingPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        var archiveDir = Path.Combine(directory, "Archives");
+        // A failed archival must not even create the archive directory, so absence is the expected state.
+        var leftovers = Directory.Exists(archiveDir)
+            ? Directory.EnumerateFileSystemEntries(archiveDir).Select(Path.GetFileName).ToArray()
+            : [];
+        Assert(leftovers.Length == 0, "Failed partial archive was exposed or retained staging data: " + string.Join(",", leftovers) + " | code=" + error.Code);
         Assert(error.Code == "ArchiveFailed" && admin.IsConnected && host.IsConnected && server.GameRunning && server.Epoch == epoch &&
             server.LockedModHash == hello.ModHash && server.WorldManifest?.Id == SnapshotBuilder.Describe(bytes).Id, "Failed archival damaged the old room.");
         Assert((await File.ReadAllBytesAsync(Path.Combine(directory, "server-state.json"))).SequenceEqual(state), "Failed archive modified the authoritative state.");
