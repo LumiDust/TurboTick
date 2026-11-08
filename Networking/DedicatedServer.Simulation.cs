@@ -94,6 +94,28 @@ public sealed partial class DedicatedServer
         if (appliedTick >= 0) _peerAppliedTick[peer.Id] = appliedTick;
     }
 
+    /// <summary>The lowest tick any joined peer has actually executed, or null when one has not reported.
+    ///
+    /// A command must be stamped at a tick no peer has already run. Peers are allowed to sit up to
+    /// <see cref="NetworkProtocol.SimulationLeadTicks"/> ahead of the slowest one, so stamping at the
+    /// server's own tick put arrivals in the past for whoever was ahead: the command then came back with a
+    /// higher sequence but an earlier tick, which the ordered intake rejects as a regression, and only the
+    /// peers that were behind applied it. That is the observed split where one peer shows commands 9..14 and
+    /// the other also shows 15..19.</summary>
+    private int? SlowestAppliedTick()
+    {
+        var slowest = int.MaxValue;
+        var any = false;
+        foreach (var peer in _peers.Values)
+        {
+            if (!peer.Joined || peer.Token.IsCancellationRequested || peer.RoomGeneration != _roomGeneration) continue;
+            if (!_peerAppliedTick.TryGetValue(peer.Id, out var applied)) return null;
+            any = true;
+            if (applied < slowest) slowest = applied;
+        }
+        return any ? slowest : null;
+    }
+
     private int LockstepTickBudget()
     {
         var slowest = int.MaxValue;

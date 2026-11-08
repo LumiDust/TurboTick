@@ -23,6 +23,13 @@ public static class CommandCodec
     public const string BillAdd = "bill-add";
     public const string BillDelete = "bill-delete";
     public const string AreaAssign = "area-assign";
+    /// <summary>Generic fallback for any gizmo button. The listed operations each get their own compact
+    /// command, but 1.7 has no single chokepoint for the rest: every gizmo action is a delegate field
+    /// (<c>Command_Action.action</c>, <c>Command_Toggle.toggleAction</c>), and the only shared code is
+    /// <c>ProcessInput</c>. So the capture takes the target's Scribe state before and after the click and
+    /// ships the result, which covers flicking, filters, bed owner, plant-to-grow and anything a third-party
+    /// mod adds, without a per-type codec.</summary>
+    public const string ThingState = "thing-state";
 
     /// <summary>The target thing id is part of the payload because several designations (HarvestPlant,
     /// Hunt, Tame, Mine) are indexed by Thing only. Sending just a cell made the receiver look a location
@@ -68,6 +75,24 @@ public static class CommandCodec
 
     public static GameCommand AreaAssignCommand(int pawnId, int areaId, long sequence) =>
         new(sequence, 0, AreaAssign, Encoding.UTF8.GetBytes($"{pawnId}|{areaId}"));
+
+    /// <summary>Payload is the thing id, a newline, then the Scribe fragment. A separator other than '|' is
+    /// required because the fragment is XML and may contain any punctuation.</summary>
+    public static GameCommand ThingStateCommand(int thingId, string xml, long sequence) =>
+        new(sequence, 0, ThingState, Encoding.UTF8.GetBytes($"{thingId}\n{xml}"));
+
+    public static bool TryDecodeThingState(byte[] payload, out int thingId, out string xml)
+    {
+        thingId = 0;
+        xml = "";
+        if (payload is null || payload.Length < 3 || payload.Length > 64 * 1024) return false;
+        var text = Encoding.UTF8.GetString(payload);
+        var split = text.IndexOf('\n');
+        if (split <= 0 || split == text.Length - 1) return false;
+        if (!int.TryParse(text[..split], out thingId)) return false;
+        xml = text[(split + 1)..];
+        return xml.Length > 0;
+    }
 
     // ---------- Decoders ----------
 

@@ -56,8 +56,23 @@ public static class SharedColony
 
     public static void OnCommands(IReadOnlyList<GameCommand> commands)
     {
+        // Diagnostic: distinguishes "the command never arrived" from "it arrived and was rejected". The
+        // acceptance run showed one peer applying sequences 17..20 and the other 17..25, and those two
+        // causes need completely different fixes.
+        if (TraceCommands && commands.Count > 0)
+        {
+            var accepted = 0;
+            foreach (var command in commands) if (Session.Commands.Accept(command)) accepted++;
+            if (accepted != commands.Count)
+                Log.Warning($"[TurboTick cmd] 收到 {commands.Count} 条，仅接受 {accepted} 条（重复或序号回退）");
+            else Log.Message($"[TurboTick cmd] 收到 {commands.Count} 条 seq {commands[0].Sequence}..{commands[^1].Sequence}");
+            return;
+        }
         foreach (var command in commands) Session.Commands.Accept(command);
     }
+
+    private static readonly bool TraceCommands = Environment.GetCommandLineArgs()
+        .Any(a => a.Equals("-turbotick-trace-commands", StringComparison.OrdinalIgnoreCase));
 
     internal static void Send(GameCommand command) => _ = RoomConnection.SendCommand(command.Kind, command.Payload, command.Sequence);
 
@@ -231,11 +246,25 @@ public static class SharedColony
         var pawns = new List<string>();
         var things = new List<string>();
         var designations = new List<string>();
+        // Positions, health and job are hashed separately. A single "colonists" bucket only said that one
+        // of the three differed, which is not enough to act on: a position divergence means AI or pathing,
+        // health means damage or needs, and job means the decision itself. The categories are compared by
+        // name on the server, so a finer split costs nothing and removes a round of guessing.
+        var pawnPositions = new List<string>();
+        var pawnHealth = new List<string>();
+        var pawnJobs = new List<string>();
         foreach (var map in Find.Maps)
         {
             foreach (var pawn in map.mapPawns.AllPawnsSpawned)
-                pawns.Add(StateHash.Pawn(pawn.thingIDNumber, map.Index, pawn.Position.x, pawn.Position.z,
-                    pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f, pawn.CurJobDef?.defName ?? ""));
+            {
+                var id = pawn.thingIDNumber;
+                var health = pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f;
+                var job = pawn.CurJobDef?.defName ?? "";
+                pawns.Add(StateHash.Pawn(id, map.Index, pawn.Position.x, pawn.Position.z, health, job));
+                pawnPositions.Add($"pp:{id}:{map.Index}:{pawn.Position.x}:{pawn.Position.z}");
+                pawnHealth.Add($"ph:{id}:{health:0.##}");
+                pawnJobs.Add($"pj:{id}:{job}");
+            }
             foreach (var thing in map.listerThings.AllThings)
                 if (thing.def.category is not (ThingCategory.Pawn or ThingCategory.Mote or ThingCategory.Ethereal))
                     things.Add(StateHash.Thing(thing.thingIDNumber, map.Index, thing.Position.x, thing.Position.z,
@@ -247,24 +276,77 @@ public static class SharedColony
         all.AddRange(pawns);
         all.AddRange(things);
         all.AddRange(designations);
-        return (all, [StateHash.Compute(pawns), StateHash.Compute(things), StateHash.Compute(designations)], pawns);
+        return (all,
+        [
+            StateHash.Compute(pawnPositions),
+            StateHash.Compute(pawnHealth),
+            StateHash.Compute(pawnJobs),
+            StateHash.Compute(things),
+            StateHash.Compute(designations),
+            // The shared random stream is part of the state, not an implementation detail. Pawns that differ
+            // only in position and job mean the AI took a different branch, and the first thing to rule out
+            // is that the two peers are drawing from different streams. Reporting it as its own category
+            // answers that in the divergence line instead of after another round of guessing.
+            StateHash.Compute([$"rng:{SimulationRandom.Capture():x16}"]),
+        ], pawns);
     }
 
     private static float lastRecoveryAt = -999f;
+    private static string pendingDesync = "";
 
     public static void OnDesync(int tick, string detail)
     {
-        Session.Fault($"状态分叉：tick {tick}（{detail}）与其他玩家不一致");
         Log.Error($"[TurboTick] 检测到状态分叉（tick {tick}，类别 {detail}）。");
         SimulationDiagnostics.Divergence(tick, detail);
+        pendingDesync = $"状态分叉：tick {tick}（{detail}）与其他玩家不一致";
         var settings = TurboTickMod.Settings;
-        if (settings == null || !settings.autoRecover) return;
+        // Pausing first is the whole point: a silent rewind loses everything since the checkpoint and hides
+        // which field actually differed. With the world still on screen the players can see the divergence
+        // and choose. MU pauses on desync for the same reasons.
+        //
+        // The session deliberately stays in Playing here. Fault() moves it to Faulted, and Faulted is not an
+        // active phase: AcceptsInput turns false, so "stay here for now" would leave the player locked out
+        // of a world that keeps running. Only the recovery path faults the session.
+        if (settings is null || settings.pauseOnDesync)
+        {
+            Find.TickManager.CurTimeSpeed = TimeSpeed.Paused;
+            NativeSpeedSync.RequestRoomPause();
+            // The server reports every divergent tick; without this the dialog would stack once a second.
+            if (Clock.Now - lastRecoveryAt < 60f) return;
+            lastRecoveryAt = Clock.Now;
+            ShowDesyncDialog(tick, detail);
+            return;
+        }
+        Session.Fault(pendingDesync);
+        if (settings is null || !settings.autoRecover) return;
         // Reuse the join path: reconnect, reload the checkpoint and replay the delta. Rate-limited so a
         // persistent divergence cannot become a reconnect storm.
         if (Clock.Now - lastRecoveryAt < 60f) return;
         lastRecoveryAt = Clock.Now;
         Log.Message("[TurboTick] 自动恢复：重新连接并从检查点追赶。");
         RoomConnection.ReconnectFromFault();
+    }
+
+    private static void ShowDesyncDialog(int tick, string detail)
+    {
+        try
+        {
+            Find.WindowStack.Add(new Dialog_MessageBox(
+                TurboTickSettings.T("TurboTick_DesyncBody", tick, detail),
+                TurboTickSettings.T("TurboTick_DesyncReload"), () =>
+                {
+                    if (Clock.Now - lastRecoveryAt < 60f) return;
+                    lastRecoveryAt = Clock.Now;
+                    Log.Message("[TurboTick] 手动恢复：重新连接并从检查点追赶。");
+                    // Leaving Playing here is what makes the reload safe: the old colony stops accepting
+                    // input and command intake is dropped before the replacement world arrives.
+                    Session.Fault(pendingDesync);
+                    RoomConnection.ReconnectFromFault();
+                },
+                TurboTickSettings.T("TurboTick_DesyncStay"), null,
+                TurboTickSettings.T("TurboTick_DesyncTitle")));
+        }
+        catch (Exception error) { Log.Warning("[TurboTick] 分叉提示窗失败：" + error.Message); }
     }
 
     private static bool loadPending;
@@ -335,6 +417,12 @@ public static class SharedColony
             NativeSpeedSync.ApplyConfirmed();
             SetLoadedStatus();
             SimulationDiagnostics.Event("world-ready");
+            // Loading has finished and the game has released the file, so the transport copies can be
+            // removed now. Doing this at LoadGame time instead left them in place: the load is a long event,
+            // the file is still open, and the delete failed silently - which is how three opaque saves
+            // reappeared after the previous cleanup.
+            WorldFiles.PruneSaves();
+            WorldFiles.PruneCache();
         });
     }
 
@@ -409,6 +497,11 @@ internal static class TickApplyPatch
         __state = default;
         if (!SharedColony.HasSharedWorld) return true;
         var audit = SimulationDiagnostics.Before(__instance);
+        // Cheap, once-per-tick guard against a dev switch that would move TicksGame by 2000 a tick.
+        SharedDeterminismGuard.Enforce();
+        // First tick of a shared world: report any third-party patch on a method the timeline relies on,
+        // so a later divergence can be traced to a mod by name instead of by bisection.
+        ModPatchAudit.Run();
         if (!SharedColony.TryBeginTick(__instance, out var permit)) return false;
         try
         {

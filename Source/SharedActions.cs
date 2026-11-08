@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using HarmonyLib;
 using RimWorld;
@@ -25,6 +26,11 @@ namespace TurboTick;
 public static class SharedActions
 {
     internal static bool Applying;
+    /// <summary>Diagnostic: one line per applied command with the shared random state in front of it. The
+    /// server stamps the tick, so two peers must show identical tick, order and state; the first line that
+    /// differs is the exact place the command path stops being deterministic.</summary>
+    private static readonly bool TraceCommands = Environment.GetCommandLineArgs()
+        .Any(a => a.Equals("-turbotick-trace-commands", StringComparison.OrdinalIgnoreCase));
     public static void ResetTickWork()
     {
         Applying = false;
@@ -105,6 +111,76 @@ public static class SharedActions
         Publish(CommandCodec.ForbidCommand(thing.thingIDNumber, forbidden, SharedColony.NextSequence()));
     }
 
+    // ---------- Generic gizmo capture ----------
+    //
+    // Enumerating every player operation does not scale: each one needs its own codec, apply path and
+    // divergence surface, and a third-party mod's gizmo can never be enumerated at all. But every gizmo
+    // press funnels through Command.ProcessInput, and every game object already knows how to describe its
+    // own state through ExposeData. So the target's state is sampled around the click and shipped whole.
+    //
+    // It also composes with the dedicated commands above instead of duplicating them: those cancel the
+    // inner method, so the click leaves the local state untouched and the before/after comparison here sees
+    // no change.
+
+    internal sealed record GizmoSnapshot(int ThingId, string? Before);
+
+    internal static List<GizmoSnapshot>? CaptureGizmoTargets()
+    {
+        if (!PlayerActing) return null;
+        var selector = Find.Selector;
+        if (selector?.SelectedObjects is not { } selected) return null;
+        List<GizmoSnapshot>? snapshots = null;
+        foreach (var entry in selected)
+        {
+            if (entry is not Thing thing) continue;
+            var before = ScribeBridge.Save(thing);
+            // A null fragment means Scribe is busy (we are inside a save). Nothing to compare against.
+            if (before is null) continue;
+            (snapshots ??= []).Add(new GizmoSnapshot(thing.thingIDNumber, before));
+        }
+        return snapshots;
+    }
+
+    internal static void FlushGizmoTargets(List<GizmoSnapshot>? snapshots)
+    {
+        if (snapshots is null || snapshots.Count == 0 || !PlayerActing) return;
+        foreach (var snapshot in snapshots)
+        {
+            var thing = FindThingById(snapshot.ThingId);
+            if (thing is null) continue;
+            var after = ScribeBridge.Save(thing);
+            if (after is null || string.Equals(after, snapshot.Before, StringComparison.Ordinal)) continue;
+            // The server drops a command whose payload exceeds 64 KB, so an oversized fragment would fail
+            // the whole action silently on the other peers. Refuse it here where the reason is visible.
+            if (after.Length > MaxThingStatePayload)
+            {
+                Log.Warning($"[TurboTick] 物品状态过大（{after.Length} 字符），未同步：{thing.def?.defName} #{snapshot.ThingId}");
+                continue;
+            }
+            Publish(CommandCodec.ThingStateCommand(snapshot.ThingId, after, SharedColony.NextSequence()));
+        }
+    }
+
+    /// <summary>Server-side command payload ceiling is 64 KB; leave room for the id and line separator.</summary>
+    private const int MaxThingStatePayload = 60 * 1024;
+
+    private static Thing? FindThingById(int id)
+    {
+        foreach (var map in Find.Maps)
+            foreach (var thing in map.listerThings.AllThings)
+                if (thing.thingIDNumber == id) return thing;
+        return null;
+    }
+
+    public static void ApplyThingState(byte[] payload)
+    {
+        if (!CommandCodec.TryDecodeThingState(payload, out var thingId, out var xml)) return;
+        var thing = FindThingById(thingId);
+        if (thing is null) return;
+        if (!ScribeBridge.Load(thing, xml))
+            Log.Warning("[TurboTick] 应用物品状态失败：" + thingId);
+    }
+
     public static void CapturePriority(Pawn pawn, WorkTypeDef w, int priority)
     {
         if (Applying || !SharedColony.Session.AcceptsInput || pawn == null || w == null) return;
@@ -164,6 +240,9 @@ public static class SharedActions
         Applying = true;
         try
         {
+            if (TraceCommands)
+                Log.Message($"[TurboTick cmd] tick={command.Tick} seq={command.Sequence} kind={command.Kind} "
+                    + $"before={SimulationRandom.Capture():x16} local={SharedColony.Session.Barrier.AppliedTick}");
             switch (command.Kind)
             {
                 case CommandCodec.Designation:
@@ -207,6 +286,9 @@ public static class SharedActions
                     break;
                 case CommandCodec.Transport:
                     ApplyTransport(command.Payload);
+                    break;
+                case CommandCodec.ThingState:
+                    ApplyThingState(command.Payload);
                     break;
                 default:
                     Log.Warning("[TurboTick] 未知共享命令：" + command.Kind);
@@ -624,4 +706,70 @@ internal static class TransportCapturePatch
         SharedActions.CaptureTransport(__instance, t, count);
         return false;
     }
+}
+
+/// <summary>
+/// Decides when a gizmo click is worth sampling. The comparison happens inside a single ProcessInput call,
+/// so any mouse-button event is correct whether the button acts on down or/// <summary>
+/// Decides when a gizmo click is worth sampling. The comparison happens inside a single ProcessInput call,
+/// so any mouse-button event is correct whether the button acts on down or on up; restricting the sample to
+/// button events is purely about cost, because the selection is serialised twice per sample and ProcessInput
+/// also runs for hover and repaint.
+/// </summary>
+internal static class GizmoInputGate
+{
+    internal static bool ShouldSample(UnityEngine.Event? ev) =>
+        ev is null || ev.type is UnityEngine.EventType.MouseUp or UnityEngine.EventType.MouseDown;
+}
+
+/// <summary>
+/// The fallback for every gizmo that has no dedicated command.
+///
+/// 1.7 declares ProcessInput on twenty-odd types and Harmony patches a method body, not a virtual slot, so a
+/// patch on Command_Action alone never sees Command_Toggle, Command_SetBedOwnerType, Command_SetPlantToGrow,
+/// Command_SetTargetFuelLevel or the ability and ritual commands. All of them are listed here instead. The
+/// base types are included as well because a derived override that calls base.ProcessInput would otherwise
+/// run its body unobserved; a nested sample simply sees no change and sends nothing.
+/// </summary>
+[HarmonyPatch]
+internal static class GizmoStatePatch
+{
+    private static IEnumerable<MethodBase> TargetMethods()
+    {
+        var names = new[]
+        {
+            "Verse.Command",
+            "Verse.Command_Action",
+            "Verse.Command_Toggle",
+            "Verse.Command_Target",
+            "Verse.Command_VerbTarget",
+            "Verse.Command_SetBedOwnerType",
+            "Verse.Command_SetPlantToGrow",
+            "RimWorld.Command_Ability",
+            "RimWorld.Command_Ritual",
+            "RimWorld.Command_BestowerCeremony",
+            "RimWorld.Command_CallBossgroup",
+            "RimWorld.Command_SetNeuralSuperchargerAutoUse",
+            "RimWorld.Command_SetTargetFuelLevel",
+            "RimWorld.Command_LoadToTransporter",
+            "RimWorld.Command_GroupedTempChange",
+        };
+        foreach (var name in names)
+        {
+            var type = AccessTools.TypeByName(name);
+            var method = type is null ? null : AccessTools.Method(type, "ProcessInput", [typeof(UnityEngine.Event)]);
+            // A renamed or removed type is a missing feature, not a crash; PatchInstaller reports the count.
+            // Abstract declarations have no body, and handing one to Harmony would fail the whole group and
+            // silently disable gizmo sync for every type listed here, so they are skipped.
+            if (method is not null && method.DeclaringType == type && !method.IsAbstract) yield return method;
+        }
+    }
+
+    private static bool Prefix(UnityEngine.Event ev, out List<SharedActions.GizmoSnapshot>? __state)
+    {
+        __state = GizmoInputGate.ShouldSample(ev) ? SharedActions.CaptureGizmoTargets() : null;
+        return true;
+    }
+
+    private static void Postfix(List<SharedActions.GizmoSnapshot>? __state) => SharedActions.FlushGizmoTargets(__state);
 }

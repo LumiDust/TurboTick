@@ -62,6 +62,15 @@ public static class NativeSpeedSync
         RoomConnection.RequestTimeSpeed(speed, () => { if (id == intent) pendingSpeed = null; });
     }
 
+    /// <summary>Asks the room for a pause. A divergence is a room-wide event: leaving the other players
+    /// running only widens the gap while one peer sits in a dialog, and the lockstep gate would freeze them
+    /// anyway without telling them why.</summary>
+    public static void RequestRoomPause()
+    {
+        if (Find.TickManager is not { } manager) return;
+        Request(manager, (int)TimeSpeed.Paused);
+    }
+
     public static void ApplyConfirmed()
     {
         if (!TurboState.Authority.SessionConnected || Current.ProgramState != ProgramState.Playing || Current.Game is null

@@ -14,6 +14,12 @@ public class TurboTickSettings : ModSettings
     public bool showPlayerCursors = true;
     /// <summary>Detected divergence: reconnect and catch up from the server's checkpoint automatically.</summary>
     public bool autoRecover = true;
+    /// <summary>Detected divergence: pause and ask instead of silently rewinding the colony.
+    ///
+    /// Rewinding loses everything the players did since the checkpoint, and it also hides which field
+    /// actually diverged. Pausing first means the world is still there to look at, and the recovery is a
+    /// deliberate choice. MU pauses on desync by default for the same two reasons.</summary>
+    public bool pauseOnDesync = true;
     /// <summary>Transport loading sync - unverified in game, therefore off by default.</summary>
     public bool experimentalInteractions = false;
     /// <summary>Trading is normally limited to the host; enabling this leaves it ungated and unsynced.</summary>
@@ -35,6 +41,7 @@ public class TurboTickSettings : ModSettings
         Scribe_Values.Look(ref showHud, "showHud", true);
         Scribe_Values.Look(ref showPlayerCursors, "showPlayerCursors", true);
         Scribe_Values.Look(ref autoRecover, "autoRecover", true);
+        Scribe_Values.Look(ref pauseOnDesync, "pauseOnDesync", true);
         Scribe_Values.Look(ref experimentalInteractions, "experimentalInteractions", false);
         Scribe_Values.Look(ref everyoneMayTrade, "everyoneMayTrade", false);
         Scribe_Values.Look(ref ServerHost, "serverHost", "127.0.0.1");
@@ -70,6 +77,7 @@ public class TurboTickSettings : ModSettings
         listing.CheckboxLabeled(T("TurboTick_ShowHud"), ref showHud, T("TurboTick_ShowHudDesc"));
         listing.CheckboxLabeled(T("TurboTick_ShowPlayerCursors"), ref showPlayerCursors, T("TurboTick_ShowPlayerCursorsDesc"));
         listing.CheckboxLabeled(T("TurboTick_AutoRecover"), ref autoRecover, T("TurboTick_AutoRecoverDesc"));
+        listing.CheckboxLabeled(T("TurboTick_PauseOnDesync"), ref pauseOnDesync, T("TurboTick_PauseOnDesyncDesc"));
         listing.CheckboxLabeled(T("TurboTick_Experimental"), ref experimentalInteractions, T("TurboTick_ExperimentalDesc"));
         listing.CheckboxLabeled(T("TurboTick_EveryoneTrades"), ref everyoneMayTrade, T("TurboTick_EveryoneTradesDesc"));
         listing.Gap(6f);

@@ -361,9 +361,15 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                 PlayerId = peer.Id, Players = CapturePlayers(peer), Epoch = Epoch
             });
             peer.Joined = true; // No other broadcast can overtake Welcome on this peer's FIFO.
-            // Lockstep must not wait for a report that predates the join: seeding at the current tick keeps
-            // the timeline moving, and the catch-up path closes any real gap the peer later reports.
-            if (_options.Lockstep) _peerAppliedTick[peer.Id] = Tick;
+            // Lockstep must not wait for a report that predates the join. Seed at the tick the peer will
+            // actually load, not at the current tick: seeding at Tick let the timeline run on while the
+            // newcomer was still reloading the checkpoint, so it then had to replay thousands of ticks at
+            // several hundred per second - the visible fast-forward. Seeding at the checkpoint keeps the
+            // backlog at the handful of ticks that accrued after it.
+            if (_options.Lockstep)
+                _peerAppliedTick[peer.Id] = _checkpointManifest is not null && CheckpointTick > 0
+                    ? Math.Min(Tick, CheckpointTick)
+                    : Tick;
             if (isSimulation) BroadcastRoles();
             else BroadcastPlayers();
             // Do not replay pointer history to a joiner. Each peer sends a one-second keepalive.
@@ -691,11 +697,14 @@ public sealed partial class DedicatedServer : IAsyncDisposable
         }
         // A display replica loads its own copy of the snapshot and then follows frames; it never reports
         // progress, so holding the resident for it would stall the world forever.
-        if (_options.RequireSimulation && !_options.Authoritative && waiting.Count > 0)
+        //
+        // A lockstep room needs the same canonical load point even though no resident simulation exists.
+        // Verse snapshots do not serialize every transient cache, so a host that has been simulating since
+        // world creation and a peer that just deserialized the checkpoint disagree even with matching RNG
+        // and IDs. Without this the two drift apart within a few hundred ticks of a join - observed at tick
+        // 960 against a checkpoint at 795 - with nobody operating anything.
+        if (!_options.Authoritative && waiting.Count > 0 && (_options.RequireSimulation || _options.Lockstep))
         {
-            // Verse snapshots do not serialize every transient cache. A live owner and a freshly
-            // deserialized joiner can diverge despite matching RNG/IDs. Establish one canonical load
-            // point for every replica, including the resident simulation, whenever a player joins.
             Volatile.Write(ref _simulationProgress, null);
             lock (_hashGate)
             {
@@ -707,7 +716,13 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                 _hashWindowFloor = message.Tick;
             }
             Volatile.Write(ref _requiredSimulationWorldId, manifest.Id);
-            Console.WriteLine($"[server] canonical join reload at tick {message.Tick}; resident simulation held until loaded");
+            // Everyone is about to jump back to the checkpoint, so nobody is at the current tick any more.
+            // Leaving their old reports in place let the timeline keep running during the reload; the peers
+            // then had to replay the whole gap at several hundred ticks per second, which the players saw
+            // as the world fast-forwarding. Rewinding the reports holds the line at the checkpoint instead.
+            foreach (var replica in _peers.Values)
+                if (replica.Joined) _peerAppliedTick[replica.Id] = message.Tick;
+            Console.WriteLine($"[server] canonical reload at tick {message.Tick}; every peer reloads so none keeps a live state");
             foreach (var replica in _peers.Values)
                 if (replica.Joined) SendCatchUp(replica);
         }
@@ -756,12 +771,23 @@ public sealed partial class DedicatedServer : IAsyncDisposable
         finally { _stateGate.Release(); }
     }
 
+    /// <summary>The command kinds a client is allowed to send.
+    ///
+    /// Networking cannot reference the Simulation project that owns the codec constants, so this list is
+    /// duplicated by hand - and it silently drifted: "thing-state" was added to the codec and to the apply
+    /// path but not here, so every generic gizmo change was rejected as UnknownCommand and the feature never
+    /// worked. A test enumerates the codec constants against this set to keep that from happening again.
+    /// </summary>
+    public static IReadOnlyCollection<string> SupportedKinds => KnownKinds;
+
     private static readonly HashSet<string> KnownKinds =
         new(StringComparer.Ordinal)
         {
             "designation", "remove-designation", "blueprint", "cancel-thing",
             "draft", "order", "transport", "forbid", "priority",
-            "zone-cell", "zone-delete", "bill-add", "bill-delete", "area-assign"
+            "zone-cell", "zone-delete", "bill-add", "bill-delete", "area-assign",
+            // The generic gizmo fallback: a whole serialised thing state.
+            "thing-state"
         };
 
     private async Task RelayCommandAsync(Peer peer, WireMessage message)
@@ -787,7 +813,13 @@ public sealed partial class DedicatedServer : IAsyncDisposable
             var batch = new List<GameCommand>(1);
             lock (_commandGate)
             {
-                var assigned = new GameCommand(Interlocked.Increment(ref _commandSequence), Volatile.Read(ref _tick) + 2,
+                // Stamp a tick no peer has reached yet. Tolerance: the slowest peer is at `slowest`, and the
+                // budget lets the fastest sit SimulationLeadTicks ahead of it, so slowest + lead is the highest
+                // tick that may already be running somewhere. Two more keeps the published timeline ahead of it.
+                var stampBase = Volatile.Read(ref _tick);
+                if (SlowestAppliedTick() is { } slowest)
+                    stampBase = Math.Max(stampBase, slowest + NetworkProtocol.SimulationLeadTicks);
+                var assigned = new GameCommand(Interlocked.Increment(ref _commandSequence), stampBase + 2,
                     command.Kind, command.Payload, command.OriginPeer);
                 lock (_history)
                 {
@@ -800,10 +832,16 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                     _history.Add(assigned);
                 }
                 batch.Add(assigned);
-                // The origin already executed the action locally when the player issued it; echoing it back
-                // would apply it twice (a duplicate blueprint, a double designator).
+                // In an authoritative room the origin already executed the action locally when the player
+                // issued it, so echoing it back would apply it twice.
+                //
+                // A lockstep room is the opposite: every peer, the origin included, applies the command at
+                // the agreed tick (see SharedActions.Apply / SharedColony.ApplyDue). Skipping the origin
+                // there meant the player who pressed the button was the only one who never did - the
+                // acceptance run showed the other peer applying sequences 17..25 while the origin stopped
+                // at 20, and the two colonies then differed in pawn position.
                 foreach (var recipient in _peers.Values)
-                    if (recipient.Joined && recipient.Id != peer.Id)
+                    if (recipient.Joined && (recipient.Id != peer.Id || _options.Lockstep))
                         recipient.Queue(new WireMessage { Type = "Commands", Commands = batch, Epoch = Epoch });
             }
             if (++_commandsSincePersist >= 200)
@@ -845,7 +883,10 @@ public sealed partial class DedicatedServer : IAsyncDisposable
             if (message.Categories is { Length: > 0 } mine && _firstCategoriesAtTick.TryGetValue(message.Tick, out var theirs)
                 && theirs.Length == mine.Length)
             {
-                var names = new[] { "colonists", "things", "designations" };
+                // Pawn state is split into position, health and job so the report names the field that
+                // actually differed instead of only saying "colonists". "随机" names the shared random
+                // stream: when it diverges the others follow.
+                var names = new[] { "位置", "血量", "工作", "物体", "标记", "随机" };
                 var hits = new List<string>();
                 for (var i = 0; i < mine.Length; i++)
                     if (!string.Equals(mine[i], theirs[i], StringComparison.Ordinal))

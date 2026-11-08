@@ -45,6 +45,14 @@ public static class Bootstrap
                 TurboTickMod.Harmony.CreateClassProcessor(typeof(HeadlessUpdatePatch)).Patch();
                 HeadlessRuntime.Start();
             }
+            // Sweep transport debris from previous sessions. A crash or a kill mid-load skips the
+            // post-load prune, so without this the hash-named snapshot copies accumulate one per attempt
+            // and show up in the load dialog as extra colonies.
+            if (!HeadlessRuntime.Active)
+            {
+                WorldFiles.PruneSaves(keep: 0);
+                WorldFiles.PruneCache(keep: 1);
+            }
             // GUI/update come from GameComponent; headless also pumps from Root on the title screen.
         }
         catch (Exception error) { Log.Error("[TurboTick] 初始化失败：" + error); }

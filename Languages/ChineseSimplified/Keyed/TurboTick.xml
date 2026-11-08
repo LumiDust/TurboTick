@@ -30,6 +30,12 @@
   <TurboTick_Diagnostics>诊断信息（反馈问题请附上）</TurboTick_Diagnostics>
   <TurboTick_AutoRecover>分叉后自动恢复</TurboTick_AutoRecover>
   <TurboTick_AutoRecoverDesc>检测到状态分叉时自动重连并从服务器检查点追赶；关闭后只提示，由你手动处理。</TurboTick_AutoRecoverDesc>
+  <TurboTick_PauseOnDesync>分叉时暂停并询问</TurboTick_PauseOnDesync>
+  <TurboTick_PauseOnDesyncDesc>检测到分叉时先暂停时间并弹窗，由你选择是否从检查点重载。关闭后立即按上面的设置恢复。</TurboTick_PauseOnDesyncDesc>
+  <TurboTick_DesyncTitle>状态分叉</TurboTick_DesyncTitle>
+  <TurboTick_DesyncBody>tick {0} 与其他玩家的状态不一致（类别：{1}）。\n\n重载会退回服务器检查点，期间的操作会丢失；继续则两端会越走越远。</TurboTick_DesyncBody>
+  <TurboTick_DesyncReload>重载检查点</TurboTick_DesyncReload>
+  <TurboTick_DesyncStay>先留在这里</TurboTick_DesyncStay>
   <TurboTick_Experimental>实验性：同步运输舱装载</TurboTick_Experimental>
   <TurboTick_ExperimentalDesc>把装舱操作同步给其他人。尚未在实机验证，默认关闭；出问题请关掉它。</TurboTick_ExperimentalDesc>
   <TurboTick_EveryoneTrades>允许所有人交易/组建远行队（不同步）</TurboTick_EveryoneTrades>

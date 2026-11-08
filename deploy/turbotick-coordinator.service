@@ -1,0 +1,28 @@
+[Unit]
+Description=TurboTick shared-colony coordinator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=turbotick
+Group=turbotick
+WorkingDirectory=/srv/turbotick
+Environment=TURBOTICK_HOST=0.0.0.0
+Environment=TURBOTICK_PORT=30572
+Environment=TURBOTICK_DATA=/srv/turbotick/state
+Environment=TURBOTICK_GAME_VERSION=1.7
+# Management is disabled when this file is absent or empty. Keep it root-owned and mode 0400.
+Environment=TURBOTICK_ADMIN_PASSWORD_FILE=/srv/turbotick/secrets/admin-password
+ExecStart=/srv/turbotick/TurboTick.Server
+KillSignal=SIGTERM
+# A running room writes a final checkpoint on SIGTERM; give it time to finish.
+TimeoutStopSec=90
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

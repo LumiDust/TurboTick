@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -13,14 +14,39 @@ public static class StateHash
     public static string Compute(IEnumerable<string> entries)
     {
         ArgumentNullException.ThrowIfNull(entries);
-        var ordered = entries.Where(entry => entry.Length > 0).OrderBy(entry => entry, StringComparer.Ordinal);
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        foreach (var entry in ordered)
+        // Order-independent without sorting. The previous version sorted every entry with an ordinal compare
+        // before hashing, which on a late-game map means ordering tens of thousands of strings once per
+        // hash tick while the simulation is paused - the hitch the caller's comment describes. Sum, xor and
+        // count over a per-entry digest give the same property in one pass: the multiset decides the value,
+        // iteration order does not.
+        ulong sum = 0, xor = 0;
+        long count = 0;
+        foreach (var entry in entries)
         {
-            hash.AppendData(Encoding.UTF8.GetBytes(entry));
-            hash.AppendData("\n"u8);
+            if (entry.Length == 0) continue;
+            var digest = Digest(entry);
+            sum += digest;
+            xor ^= digest;
+            count++;
         }
-        return Convert.ToHexStringLower(hash.GetHashAndReset());
+        Span<byte> combined = stackalloc byte[24];
+        BinaryPrimitives.WriteUInt64LittleEndian(combined, sum);
+        BinaryPrimitives.WriteUInt64LittleEndian(combined[8..], xor);
+        BinaryPrimitives.WriteInt64LittleEndian(combined[16..], count);
+        return Convert.ToHexStringLower(SHA256.HashData(combined));
+    }
+
+    /// <summary>FNV-1a over UTF-16 code units. Ordinal, cheap, and independent of string allocation
+    /// interning, which is all the combination above needs from it.</summary>
+    private static ulong Digest(string value)
+    {
+        var hash = 14695981039346656037UL;
+        foreach (var c in value)
+        {
+            hash ^= c;
+            hash *= 1099511628211UL;
+        }
+        return hash;
     }
 
     /// <summary>Canonical description of one pawn's simulated state.</summary>

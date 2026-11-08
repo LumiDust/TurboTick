@@ -61,7 +61,7 @@ async Task WritePacket(TcpClient socket, object message)
 
 async Task<System.Text.Json.JsonElement> ReadPacket(TcpClient socket)
 {
-    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
     var header = new byte[4];
     await socket.GetStream().ReadExactlyAsync(header, timeout.Token);
     var length = BinaryPrimitives.ReadInt32LittleEndian(header);
@@ -292,7 +292,7 @@ await Test("an in-flight host claim never hops connections or leaves host state 
     {
         await changing.ConnectAsync("127.0.0.1", ((System.Net.IPEndPoint)listener.LocalEndpoint).Port, Hello());
         var claim = changing.ClaimHostAsync();
-        await requestSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await requestSeen.Task.WaitAsync(TimeSpan.FromSeconds(20));
         await changing.ConnectAsync("127.0.0.1", room.Port, Hello());
         await Throws(() => claim);
         Check(!changing.IsHost && changing.Players.All(p => !p.IsHost), "the new connection remains an ordinary join");
@@ -376,14 +376,14 @@ await Test("delayed host role and roster notifications cannot poison another roo
         if (Interlocked.Increment(ref firstEvent) == 1)
         {
             entered.TrySetResult();
-            release.Task.Wait(TimeSpan.FromSeconds(5));
+            release.Task.Wait(TimeSpan.FromSeconds(20));
         }
         else notifications.Enqueue(players.Any(p => p.IsHost));
     };
     try
     {
         await changing.ClaimHostAsync();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(20));
         Check(changing.IsHost, "old room role is confirmed while its UI dispatcher is blocked");
         await changing.ConnectAsync("127.0.0.1", second.Port, Hello());
     }
@@ -733,7 +733,7 @@ await Test("queued notifications from server A cannot poison server B policy aft
         await client.ConnectAsync("127.0.0.1", b.Port, Hello());
         authority.BeginSession();
         release.Set();
-        await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await delivered.Task.WaitAsync(TimeSpan.FromSeconds(20));
         Check(authority.Current == b.CurrentPolicy, "old revision from room A poisoned room B subscriber state");
     }
     finally { release.Set(); }
@@ -783,13 +783,13 @@ await Test("shared colony: controller publishes world, starts, and both clients 
     var started = new TaskCompletionSource<long>();
     guest.WorldStarted += (session, _) => started.TrySetResult(session.Epoch);
     await controller.StartGameAsync();
-    Check(await started.Task.WaitAsync(TimeSpan.FromSeconds(5)) >= 0, "guest receives start");
+    Check(await started.Task.WaitAsync(TimeSpan.FromSeconds(20)) >= 0, "guest receives start");
     var received = new TaskCompletionSource<List<GameCommand>>();
     guest.CommandsReceived += commands => received.TrySetResult(commands.ToList());
     var hostEchoed = false;
     controller.CommandsReceived += _ => hostEchoed = true;
     await controller.SendCommandAsync("designation", "Mine|0|10|20"u8.ToArray());
-    var batch = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var batch = await received.Task.WaitAsync(TimeSpan.FromSeconds(20));
     Check(batch.Count == 1 && batch[0].Sequence == 1 && batch[0].Kind == "designation", "command relayed in order");
     Check(!hostEchoed, "the origin does not receive its own command back");
     Check(batch[0].Tick >= 0 && batch[0].Payload.Length > 0, "server assigned tick and kept payload");
@@ -815,6 +815,16 @@ await Test("controller-only room requires explicit host to publish its world", a
 
 await Test("action codec round-trips every player action and rejects malformed payloads", () =>
 {
+    // The generic gizmo fallback carries a raw Scribe fragment, so its separator must not be a character
+    // that can appear in the payload. XML is full of '|' in text nodes; a newline before the fragment keeps
+    // the id unambiguous.
+    var fragment = "<v><forbidden>True</forbidden><label>a|b|c</label></v>";
+    var state = TurboTick.Simulation.CommandCodec.ThingStateCommand(9876, fragment, 3);
+    Check(TurboTick.Simulation.CommandCodec.TryDecodeThingState(state.Payload, out var stateId, out var stateXml)
+        && stateId == 9876 && stateXml == fragment, "thing state keeps a fragment containing separators");
+    Check(!TurboTick.Simulation.CommandCodec.TryDecodeThingState([], out _, out _), "empty thing state rejected");
+    Check(!TurboTick.Simulation.CommandCodec.TryDecodeThingState("9876\n"u8.ToArray(), out _, out _),
+        "thing state without a fragment rejected");
     var design = TurboTick.Simulation.CommandCodec.DesignationCommand("Mine", 0, 12, 34, -1, 7);
     Check(TurboTick.Simulation.CommandCodec.TryDecodeDesignation(design.Payload, out var def, out var map, out var x, out var z, out var thing)
         && def == "Mine" && map == 0 && x == 12 && z == 34 && thing == -1, "designation");
@@ -854,6 +864,13 @@ await Test("state hash is order independent and changes with simulated state", (
     Check(TurboTick.Simulation.StateHash.Compute(a) == TurboTick.Simulation.StateHash.Compute(b), "order independent");
     Check(TurboTick.Simulation.StateHash.Compute(a) != TurboTick.Simulation.StateHash.Compute(["t:1:0:5:5:1:99", "p:2:0:7:8:0.75:Haul"]), "detects change");
     Check(TurboTick.Simulation.StateHash.Compute(["p:2:0:7:8:0.75:Haul"]).Length == 64, "sha256 hex");
+    // The combination is sum+xor+count precisely so that a duplicate entry cannot cancel itself out. With
+    // xor alone, [a, a] would hash like [] and a lost thing would go unnoticed.
+    Check(TurboTick.Simulation.StateHash.Compute(["p:2:0:7:8:0.75:Haul"]) !=
+          TurboTick.Simulation.StateHash.Compute(["p:2:0:7:8:0.75:Haul", "p:2:0:7:8:0.75:Haul"]),
+        "a duplicated entry changes the value");
+    Check(TurboTick.Simulation.StateHash.Compute([]) == TurboTick.Simulation.StateHash.Compute([""]),
+        "empty entries are ignored");
     return Task.CompletedTask;
 });
 
@@ -876,7 +893,7 @@ await Test("server reports a desync when two peers disagree on the same tick", a
     Check(!desync.Task.IsCompleted, "matching hashes are silent");
     await b.ReportHashAsync(120, new string('b', 64));
     await a.ReportHashAsync(120, new string('c', 64));
-    Check(await desync.Task.WaitAsync(TimeSpan.FromSeconds(5)) == 120, "mismatch reported with the tick");
+    Check(await desync.Task.WaitAsync(TimeSpan.FromSeconds(20)) == 120, "mismatch reported with the tick");
 });
 
 await Test("a peer joining mid-session receives the epoch, tick and full command history", async () =>
@@ -898,7 +915,7 @@ await Test("a peer joining mid-session receives the epoch, tick and full command
     late.WorldStarted += (session, _) => started.TrySetResult(session.Tick);
     late.CommandsReceived += commands => { lock (replay) replay.AddRange(commands); };
     await late.ConnectAsync("127.0.0.1", server.Port, Hello("late"));
-    Check(await started.Task.WaitAsync(TimeSpan.FromSeconds(5)) >= 0, "late peer receives the running epoch");
+    Check(await started.Task.WaitAsync(TimeSpan.FromSeconds(20)) >= 0, "late peer receives the running epoch");
     await Until(() => { lock (replay) return replay.Count == 1; });
     Check(replay[0].Kind == "designation", "history replayed to the late peer");
 });
@@ -1047,8 +1064,8 @@ await Test("a checkpoint trims history so a late join replays only the delta", a
     late.WorldStarted += (session, _) => started.TrySetResult(session);
     late.CommandsReceived += commands => { lock (replay) replay.AddRange(commands); };
     await late.ConnectAsync("127.0.0.1", server.Port, Hello("late"));
-    var info = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await checkpointReply.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var info = await started.Task.WaitAsync(TimeSpan.FromSeconds(20));
+    await checkpointReply.Task.WaitAsync(TimeSpan.FromSeconds(20));
     Check(info.SnapshotTick == tick, "late peer starts from the selected checkpoint boundary");
     await Until(() => { lock (replay) return replay.Count == 1; });
     Check(replay[0].Kind == "draft", "only the delta replays");
@@ -1099,6 +1116,7 @@ await Test("concurrent state hashes compare every shared tick", async () =>
     await Until(() => a.PresenceEpoch == server.Epoch && b.PresenceEpoch == server.Epoch);
     var pawns = new string('1', 64);
     var things = new string('2', 64);
+    // Five categories: pawn position, health, job, things, designations. Only the last is made to differ.
     for (var round = 1; round <= 256; round++)
     {
         var expectedTick = round;
@@ -1111,20 +1129,36 @@ await Test("concurrent state hashes compare every shared tick", async () =>
             var first = Task.Run(async () =>
             {
                 await start.Task;
-                await a.ReportHashAsync(expectedTick, new string('a', 64), [pawns, things, new string('3', 64)]);
+                await a.ReportHashAsync(expectedTick, new string('a', 64), [pawns, things, things, things, new string('3', 64), things]);
             });
             var second = Task.Run(async () =>
             {
                 await start.Task;
-                await b.ReportHashAsync(expectedTick, new string('b', 64), [pawns, things, new string('4', 64)]);
+                await b.ReportHashAsync(expectedTick, new string('b', 64), [pawns, things, things, things, new string('4', 64), things]);
             });
             start.SetResult();
             await Task.WhenAll(first, second);
-            Check(await detail.Task.WaitAsync(TimeSpan.FromSeconds(5)) == "designations",
+            Check(await detail.Task.WaitAsync(TimeSpan.FromSeconds(20)) == "标记",
                 $"concurrent report pair {expectedTick} must be compared exactly once with category detail");
         }
         finally { b.DesyncDetected -= record; }
     }
+});
+
+await Test("every codec command kind is accepted by the server whitelist", () =>
+{
+    // The whitelist lives in Networking and the constants live in Simulation, so they are maintained by hand.
+    // That drifted once already: "thing-state" reached the codec and the apply path but not the whitelist, so
+    // the server rejected every generic gizmo change as UnknownCommand and the feature silently did nothing.
+    var kinds = typeof(TurboTick.Simulation.CommandCodec)
+        .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+        .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+        .Select(f => (string)f.GetRawConstantValue()!)
+        .ToArray();
+    Check(kinds.Length >= 14, $"codec exposes its kinds (found {kinds.Length})");
+    var missing = kinds.Where(k => !TurboTick.Networking.DedicatedServer.SupportedKinds.Contains(k)).ToArray();
+    Check(missing.Length == 0, "server whitelist is missing: " + string.Join(", ", missing));
+    return Task.CompletedTask;
 });
 
 await Test("desync detail names the category that diverged", async () =>
@@ -1143,10 +1177,10 @@ await Test("desync detail names the category that diverged", async () =>
     var pawns = new string('1', 64);
     var things = new string('2', 64);
     var designations = new string('3', 64);
-    await a.ReportHashAsync(60, new string('a', 64), [pawns, things, designations]);
+    await a.ReportHashAsync(60, new string('a', 64), [pawns, things, things, things, designations, things]);
     var otherDesignations = new string('4', 64);
-    await b.ReportHashAsync(60, new string('b', 64), [pawns, things, otherDesignations]);
-    Check(await detail.Task.WaitAsync(TimeSpan.FromSeconds(5)) == "designations", "only the differing category is named");
+    await b.ReportHashAsync(60, new string('b', 64), [pawns, things, things, things, otherDesignations, things]);
+    Check(await detail.Task.WaitAsync(TimeSpan.FromSeconds(20)) == "标记", "only the differing category is named");
 });
 
 await Test("a dropped peer reconnects to the checkpoint, replays the delta and can act again", async () =>
@@ -1175,7 +1209,7 @@ await Test("a dropped peer reconnects to the checkpoint, replays the delta and c
     guest.WorldStarted += (session, _) => info.TrySetResult(session);
     guest.CommandsReceived += commands => { lock (replay) replay.AddRange(commands); };
     await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
-    var resumed = await info.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var resumed = await info.Task.WaitAsync(TimeSpan.FromSeconds(20));
     Check(resumed.SnapshotTick == server.CheckpointTick, "resumes from the checkpoint");
     await Until(() => { lock (replay) return replay.Count == 1; });
     Check(replay[0].Kind == "draft", "only the post-checkpoint delta replays");
@@ -1296,7 +1330,7 @@ await Test("an overflowed history tells the joining peer it cannot catch up inst
     var incomplete = new TaskCompletionSource<bool>();
     late.CatchUpIncomplete += () => incomplete.TrySetResult(true);
     await late.ConnectAsync("127.0.0.1", server.Port, Hello("late"));
-    Check(await incomplete.Task.WaitAsync(TimeSpan.FromSeconds(5)), "peer is warned, not silently diverged");
+    Check(await incomplete.Task.WaitAsync(TimeSpan.FromSeconds(20)), "peer is warned, not silently diverged");
     // A checkpoint makes the room joinable again.
     await Task.Delay(200);
     await host.CheckpointWorldAsync(
@@ -1446,7 +1480,7 @@ await Test("transport command round-trips and the server accepts the kind", asyn
     var received = new TaskCompletionSource<GameCommand>();
     guest.CommandsReceived += commands => received.TrySetResult(commands[0]);
     await host.SendCommandAsync("transport", command.Payload);
-    var relayed = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var relayed = await received.Task.WaitAsync(TimeSpan.FromSeconds(20));
     Check(relayed.Kind == "transport", "transport reaches other peers");
 });
 

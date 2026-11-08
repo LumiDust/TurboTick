@@ -30,6 +30,12 @@
   <TurboTick_Diagnostics>Diagnostics (attach when reporting a problem)</TurboTick_Diagnostics>
   <TurboTick_AutoRecover>Auto-recover after a desync</TurboTick_AutoRecover>
   <TurboTick_AutoRecoverDesc>Reconnect and catch up from the server checkpoint when divergence is detected. Off shows a notice only.</TurboTick_AutoRecoverDesc>
+  <TurboTick_PauseOnDesync>Pause and ask on a desync</TurboTick_PauseOnDesync>
+  <TurboTick_PauseOnDesyncDesc>Pause the timeline and show a dialog when divergence is detected, so you decide whether to reload the checkpoint. Off applies the setting above immediately.</TurboTick_PauseOnDesyncDesc>
+  <TurboTick_DesyncTitle>Desync detected</TurboTick_DesyncTitle>
+  <TurboTick_DesyncBody>State at tick {0} differs from another player (fields: {1}).\n\nReloading rewinds to the server checkpoint and loses everything since; staying means the two sides drift further apart.</TurboTick_DesyncBody>
+  <TurboTick_DesyncReload>Reload checkpoint</TurboTick_DesyncReload>
+  <TurboTick_DesyncStay>Stay here for now</TurboTick_DesyncStay>
   <TurboTick_Experimental>Experimental: sync transport loading</TurboTick_Experimental>
   <TurboTick_ExperimentalDesc>Replicates loading items into transport pods. Not verified in game; off by default.</TurboTick_ExperimentalDesc>
   <TurboTick_EveryoneTrades>Allow everyone to trade and form caravans (unsynced)</TurboTick_EveryoneTrades>

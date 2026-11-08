@@ -34,6 +34,11 @@ workshop-local/
 *.snapshot
 *.tmp
 
+# Local working memory for long tasks (see AGENTS.md)
+/task_plan.md
+/findings.md
+/progress.md
+
 # OS
 Thumbs.db
 desktop.ini

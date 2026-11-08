@@ -13,8 +13,17 @@ namespace TurboTick;
 /// thread; the protocol, snapshots and lockstep adapter are shared with the regular client.</summary>
 internal static class HeadlessRuntime
 {
-    internal static bool Active { get; } = Environment.GetCommandLineArgs()
+    /// <summary>Hosts a listener and a room. This is the dedicated server.</summary>
+    internal static bool ServerMode { get; } = Environment.GetCommandLineArgs()
         .Any(a => a.Equals("-turbotick-server", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>A headless player: no listener, no room of its own, it joins someone else's room exactly
+    /// like a normal client. It exists so a two-peer determinism check can run without a display, which is
+    /// otherwise the only way to tell whether the simulation is actually deterministic.</summary>
+    internal static bool ParticipantMode { get; } = Environment.GetCommandLineArgs()
+        .Any(a => a.Equals("-turbotick-participant", StringComparison.OrdinalIgnoreCase));
+
+    internal static bool Active { get; } = ServerMode || ParticipantMode;
     private static readonly ConcurrentQueue<Action> pending = new();
     private static DedicatedServer? server;
     private static Task? startup;
@@ -51,8 +60,11 @@ internal static class HeadlessRuntime
     /// simulator is the change under test.</summary>
     internal static bool ResidentSimulation => !Lockstep;
 
-    /// <summary>A coordinator holds its own colony forever; only a resident simulator may tick one.</summary>
-    internal static bool HoldLocalTicks => Active && (!ResidentSimulation || !SharedColony.Gating || stopping);
+    /// <summary>A coordinator holds its own colony forever; only a resident simulator may tick one.
+    ///
+    /// Keyed on <see cref="ServerMode"/> rather than <see cref="Active"/>: a headless participant is a player
+    /// and must tick its own colony, otherwise it would sit at the checkpoint while the room waits for it.</summary>
+    internal static bool HoldLocalTicks => ServerMode && (!ResidentSimulation || !SharedColony.Gating || stopping);
 
     internal static void Start()
     {
@@ -62,6 +74,14 @@ internal static class HeadlessRuntime
         {
             if (!GenCommandLine.CommandLineArgPassed("headless"))
                 throw new ArgumentException("-turbotick-server requires -headless.");
+            // A participant owns no room, no state directory and no listener: it joins through the normal
+            // client path, so none of the server bootstrap below applies to it.
+            if (!ServerMode)
+            {
+                state = "participant";
+                Log.Message("[TurboTick headless] participant mode: no listener; joining through -turbotick-connect.");
+                return;
+            }
             // A coordinator never runs a colony, so the gameplay patches are irrelevant to it; requiring
             // them would fail a host that is only relaying and pacing.
             if (ResidentSimulation && (!PatchInstaller.AllCritical || PatchInstaller.Status.Any(p => !p.Value)))
@@ -134,6 +154,45 @@ internal static class HeadlessRuntime
         }
         catch (Exception error) { Fail("Configuration", error); }
     }
+
+    private static float nextParticipantLog;
+
+    /// <summary>One line per five seconds describing what a headless participant is doing. Without it a
+    /// stalled acceptance run looks like a live process with a log that simply stops.</summary>
+    private static void ReportParticipant()
+    {
+        // TurboGameComponent is the pump for a normal client, but it deliberately stands aside in a headless
+        // process because Root.Update pumps instead. Nothing else would fire the command-line auto-connect,
+        // so a headless participant has to drive it here.
+        //
+        // The connect has to wait for a real colony: the publish path refuses to start while the game is not
+        // Playing, and AutoConnectOnce only ever runs once, so connecting during world generation would burn
+        // the single attempt and leave the room without a world.
+        if (Current.ProgramState == ProgramState.Playing && !LongEventHandler.AnyEventNowOrWaiting)
+            RoomConnection.AutoConnectOnce();
+        // Only the host drives the scripted actions; two peers issuing the same commands would mask a
+        // command-path defect by producing identical (but wrong) state on both sides.
+        if (RoomConnection.IsHost) AcceptanceRun.Update();
+        if (Clock.Now < nextParticipantLog) return;
+        nextParticipantLog = Clock.Now + 5f;
+        try
+        {
+            var session = SharedColony.Session;
+            Log.Message($"[TurboTick headless] participant phase={session.Phase} status=\"{RoomConnection.Status}\" "
+                + $"connected={RoomConnection.Client?.IsConnected} busy={RoomConnection.Busy} "
+                + $"tick={session.Barrier.AppliedTick} server={session.Barrier.ServerTick} backlog={session.Barrier.Backlog} "
+                // The fingerprint is what a rejected handshake is about, so printing it turns "differ from the
+                // server" into two values that can be compared instead of a guess. Sliced defensively: before
+                // the first capture it is null or shorter than the prefix, and [..12] on that throws.
+                + $"fp={Short(RoomConnection.Fingerprint)} "
+                + $"gating={SharedColony.Gating} game={Current.ProgramState}");
+        }
+        catch (Exception error) { Log.Warning("[TurboTick headless] participant status: " + error.GetType().Name); }
+    }
+
+    /// <summary>First twelve characters, or "-" when the value is absent or shorter than that.</summary>
+    private static string Short(string? value) =>
+        string.IsNullOrEmpty(value) ? "-" : value.Length <= 12 ? value : value[..12];
 
     internal static Task ConnectSimulationAsync(DedicatedClient client, ClientHello hello, CancellationToken ct) =>
         (server ?? throw new InvalidOperationException("The embedded server has not started.")).ConnectSimulationAsync(client, hello, ct);
@@ -257,6 +316,10 @@ internal static class HeadlessRuntime
     internal static void Update()
     {
         if (!Active) return;
+        // A participant has no listener and no status file, so without this a stalled acceptance run is
+        // invisible: the process keeps burning CPU and the log simply stops. One line every five seconds
+        // answers "which phase is it stuck in" without a debugger.
+        if (!ServerMode) ReportParticipant();
         while (pending.TryDequeue(out var action))
             try { action(); } catch (Exception error) { Fail("Game thread", error); }
         if (shutdown?.IsCompleted == true)

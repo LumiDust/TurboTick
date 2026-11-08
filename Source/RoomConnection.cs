@@ -38,6 +38,10 @@ internal static class RoomConnection
         bool simulation = false)
     {
         SetStatus("开始连接 " + settings.ServerHost.Trim() + ":" + settings.ServerPort);
+        // Sweep leftovers from any previous session before pulling another snapshot. A crash mid-load skips
+        // the post-load prune, so without this the transport copies accumulate one per attempt.
+        WorldFiles.PruneSaves();
+        WorldFiles.PruneCache();
         // Must run on the game thread before starting the background hash/connection operation.
         ManifestInputs inputs;
         try { inputs = CompatibilityManifest.Capture(); }
@@ -265,11 +269,9 @@ internal static class RoomConnection
                         var saveName = WorldFiles.PrepareLoad(path);
                         SetStatus("正在载入共享存档：" + saveName);
                         SharedColony.BeginWorldLoad(saveName);
+                        // The copy is deleted once the load finishes, in SharedColony.ScheduleWorldLoaded:
+                        // deleting here would race the long event and silently leave the file behind.
                         GameDataSaveLoader.LoadGame(saveName);
-                        // Loading has consumed the copy; keep Saves/ and the cache bounded so a long session
-                        // does not fill the drive with one opaque file per checkpoint.
-                        WorldFiles.PruneSaves();
-                        WorldFiles.PruneCache();
                     }
                     catch (Exception error) { SharedColony.OnWorldLoadFailed(error.Message); SetStatus("载入共享存档失败：" + error.Message); }
                 });
@@ -323,7 +325,8 @@ internal static class RoomConnection
     /// <summary>Developer aid used by the acceptance run: join once after a colony loads.</summary>
     public static void AutoConnectOnce()
     {
-        if (HeadlessRuntime.Active || autoConnectTried) return;
+        // A headless server owns its room and must not join itself; a headless participant is a player.
+        if (HeadlessRuntime.ServerMode || autoConnectTried) return;
         autoConnectTried = true;
         if (TurboState.Authority.SessionRequested || MultiplayerHosting.Pending || MultiplayerHosting.IsHosting) return;
         // Automated acceptance runs pass -turbotick-connect=host:port on the command line.

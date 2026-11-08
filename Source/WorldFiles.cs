@@ -60,20 +60,31 @@ internal static class WorldFiles
         return name;
     }
 
-    /// <summary>Removes the transient copies this mod placed in Saves/. Called after a load completes.</summary>
-    public static void PruneSaves()
+    /// <summary>Removes the transient copies this mod placed in Saves/. Called after a load finishes and at
+    /// startup, when the game has released the file.
+    ///
+    /// Default is to remove all of them: these are pure transport, the world is already in memory, and a
+    /// leftover is indistinguishable from a real colony in the load dialog. <c>keep</c> exists only for
+    /// callers that want to retain the most recent one.
+    ///
+    /// Deleting at LoadGame time instead does nothing: the load is a long event, the file is still open, and
+    /// the delete fails silently.</summary>
+    public static void PruneSaves(int keep = 0)
     {
         try
         {
-            foreach (var file in new DirectoryInfo(GenFilePaths.SaveDataFolderPath).GetFiles("*.rws"))
-            {
-                // Only our own artefacts: the server names snapshots by content hash, and a checkpoint save
-                // carries the prefix. Anything the player named is left alone.
-                var stem = System.IO.Path.GetFileNameWithoutExtension(file.Name);
-                var ours = stem.StartsWith("TurboTickCheckpoint_", StringComparison.Ordinal)
-                    || (stem.Length == 64 && stem.All(Uri.IsHexDigit));
-                if (ours) TryDelete(file.FullName);
-            }
+            var ours = new DirectoryInfo(GenFilePaths.SaveDataFolderPath).GetFiles("*.rws")
+                .Where(file =>
+                {
+                    // Only our own artefacts: the server names snapshots by content hash, and a checkpoint
+                    // save carries the prefix. Anything the player named is left alone.
+                    var stem = System.IO.Path.GetFileNameWithoutExtension(file.Name);
+                    return stem.StartsWith("TurboTickCheckpoint_", StringComparison.Ordinal)
+                        || (stem.Length == 64 && stem.All(Uri.IsHexDigit));
+                })
+                .OrderByDescending(file => file.LastWriteTimeUtc)
+                .ToArray();
+            for (var i = keep; i < ours.Length; i++) TryDelete(ours[i].FullName);
         }
         catch (Exception error) { Log.Warning("[TurboTick] 清理临时存档失败：" + error.Message); }
     }

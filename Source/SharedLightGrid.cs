@@ -35,6 +35,10 @@ internal static class SharedLightGrid
         flushing = true;
         try
         {
+            // Game and world level first, mirroring Game.UpdatePlay: components at these levels decide
+            // incidents, quests, world pawns and caravans, and vanilla drives all of them per frame.
+            if (Current.Game is not null) GameComponentUtility.GameComponentUpdate();
+            if (Find.World is { } world) RimWorld.Planet.WorldComponentUtility.WorldComponentUpdate(world);
             var maps = Find.Maps;
             for (var i = 0; i < maps.Count; i++)
             {
@@ -42,12 +46,20 @@ internal static class SharedLightGrid
                 if (map is null || map.Disposed) continue;
                 // Sky first: its glow feeds the light grid.
                 map.skyManager?.SkyManagerUpdate();
+                // Weather decides rain, snow and temperature drift, which feed plant growth, fire spread and
+                // pawn comfort. It is frame driven in vanilla, so leaving it out let the two peers run
+                // different weather and then take different AI decisions from it.
+                map.weatherManager?.WeatherManagerUpdate();
                 map.glowGrid?.GlowGridUpdate_First();
                 // Structures AI and pathing depend on.
                 map.powerNetManager?.UpdatePowerNetsAndConnections_First();
                 map.regionGrid?.UpdateClean();
                 map.regionAndRoomUpdater?.TryRebuildDirtyRegionsAndRooms();
                 map.lordManager?.LordManagerUpdate();
+                map.areaManager?.AreaManagerUpdate();
+                // Every MapComponent updates here in vanilla - snow depth, temperature cache, wind, water.
+                // Those are simulation inputs, not decoration, so they belong on the tick as well.
+                MapComponentUtility.MapComponentUpdate(map);
             }
         }
         finally { flushing = false; }
@@ -95,6 +107,82 @@ internal static class SharedRoomCadence
 internal static class SharedLordCadence
 {
     private static bool Prefix() => !SharedLightGrid.Gated;
+}
+
+/// <summary>Weather is a simulation input (rain, snow, temperature) even though vanilla drives it per frame.</summary>
+[HarmonyPatch(typeof(RimWorld.WeatherManager), nameof(RimWorld.WeatherManager.WeatherManagerUpdate))]
+internal static class SharedWeatherCadence
+{
+    private static bool Prefix() => !SharedLightGrid.Gated;
+}
+
+/// <summary>Areas feed allowed-area restrictions, which decide where pawns are permitted to walk.</summary>
+[HarmonyPatch(typeof(AreaManager), nameof(AreaManager.AreaManagerUpdate))]
+internal static class SharedAreaCadence
+{
+    private static bool Prefix() => !SharedLightGrid.Gated;
+}
+
+/// <summary>MapComponents carry snow depth, the temperature cache, wind and water - all simulation inputs.</summary>
+[HarmonyPatch(typeof(MapComponentUtility), nameof(MapComponentUtility.MapComponentUpdate))]
+internal static class SharedMapComponentCadence
+{
+    private static bool Prefix() => !SharedLightGrid.Gated;
+}
+
+/// <summary>
+/// GameComponents are the game-level counterpart: the storyteller's incident clock, quests, research and
+/// tale tracking. <see cref="Verse.Game.UpdatePlay"/> updates them every frame, so two peers ran different
+/// incident timing from the same save.
+///
+/// TurboTick's own component must keep running even while the rest are held: it is the pump that processes
+/// network messages, so skipping it stops the peer from ever hearing the server. That mistake froze a peer
+/// immediately after it published a colony - the phase moved to LoadingWorld, the gate closed, and the
+/// message that would have finished the load was never read.
+/// </summary>
+[HarmonyPatch(typeof(GameComponentUtility), nameof(GameComponentUtility.GameComponentUpdate))]
+internal static class SharedGameComponentCadence
+{
+    private static bool Prefix()
+    {
+        if (!SharedLightGrid.Gated) return true;
+        if (Current.Game?.components is { } components)
+            for (var i = 0; i < components.Count; i++)
+                if (components[i] is TurboGameComponent) components[i].GameComponentUpdate();
+        return false;
+    }
+}
+
+/// <summary>WorldComponents keep world pawns, caravans and tile data current, also once per frame.</summary>
+[HarmonyPatch(typeof(RimWorld.Planet.WorldComponentUtility), nameof(RimWorld.Planet.WorldComponentUtility.WorldComponentUpdate))]
+internal static class SharedWorldComponentCadence
+{
+    private static bool Prefix() => !SharedLightGrid.Gated;
+}
+
+/// <summary>
+/// Dev-mode switches that change the tick a shared world is allowed to run on.
+///
+/// <c>DebugSettings.fastEcology</c> makes <see cref="TickManager.DoSingleTick"/> advance
+/// <c>ticksGameInt</c> by 2000 instead of 1. TicksGame is what <see cref="TickList"/> uses to choose its
+/// bucket, so one player with that switch on would run every long tick on every tick and drag the colony
+/// away from everyone else within seconds. It is a debugging aid, not a gameplay option, so a shared world
+/// turns it off instead of trying to reconcile the two.
+/// </summary>
+internal static class SharedDeterminismGuard
+{
+    private static bool warned;
+
+    internal static void Enforce()
+    {
+        if (!SharedColony.HasSharedWorld) return;
+        // Public static field, so no reflection is needed and the per-tick cost is one bool read.
+        if (!DebugSettings.fastEcology) return;
+        DebugSettings.fastEcology = false;
+        if (warned) return;
+        warned = true;
+        Log.Warning("[TurboTick] 已关闭「快速生态」开发选项：它让每个 tick 前进 2000，会直接破坏共享时间线。");
+    }
 }
 
 /// <summary>
