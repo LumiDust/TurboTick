@@ -118,7 +118,19 @@ try {
         }
     }
     finally { $zip.Dispose() }
-    $hashes = Get-FileHash -LiteralPath $modZip, $headlessZip -Algorithm SHA256
+    # Coordinator: the 0.6.1 default server. Self-contained single file with no game assemblies, so the host
+    # does not need a RimWorld installation. Published alongside the headless installer, which stays for
+    # rolling back to 0.6.0.
+    $coordinatorDir = Join-Path $out 'coordinator'
+    if (Test-Path -LiteralPath $coordinatorDir) { Remove-Item -LiteralPath $coordinatorDir -Recurse -Force }
+    Run-Dotnet @('publish', (Join-Path $repo 'Server/TurboTick.Server.csproj'), '-c', 'Release', '-r', 'linux-x64',
+        '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true',
+        '-o', $coordinatorDir)
+    $coordinator = Join-Path $out "TurboTick-$version-coordinator-linux-x64"
+    Move-Item -LiteralPath (Join-Path $coordinatorDir 'TurboTick.Server') -Destination $coordinator -Force
+    Remove-Item -LiteralPath $coordinatorDir -Recurse -Force
+    if (-not (Test-Path -LiteralPath $coordinator)) { throw 'Coordinator publish produced no binary.' }
+    $hashes = Get-FileHash -LiteralPath $modZip, $headlessZip, $coordinator -Algorithm SHA256
     $lines = $hashes | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" }
     [IO.File]::WriteAllText((Join-Path $out 'SHA256SUMS'), ($lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
     $hashes | Select-Object Hash, Path
