@@ -153,4 +153,8 @@
   <TurboTick_RoomDisconnected>房间连接已断开</TurboTick_RoomDisconnected>
   <TurboTick_RoomDisconnectedGuide>当前尚未连接房间。请重连，或从上方“管理服务器”检查并重开服务器。</TurboTick_RoomDisconnectedGuide>
   <TurboTick_RoomConnecting>正在连接专用服务器，请稍候…</TurboTick_RoomConnecting>
+  <TurboTick_FingerprintMismatch>专服连接未完成：本机与服务器的模组内容、加载顺序或 Mod 配置不一致。
+本机指纹：{0}
+逐文件清单：{1}
+把这个文件与房主的那份对比即可定位到具体是哪个 Mod、哪个文件不同。常见原因：同时订阅了创意工坊的旧版本与本地的同一 Mod（packageId 会被加 _steam 后缀）、Harmony 版本不同、装载了对方没有的 Mod。</TurboTick_FingerprintMismatch>
 </LanguageData>

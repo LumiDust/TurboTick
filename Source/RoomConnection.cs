@@ -156,9 +156,17 @@ internal static class RoomConnection
                 {
                     pendingWorldEvents.Clear();
                     TurboState.Authority.ConnectionLost();
-                    connectionFailure = error is NetworkException { Code: "HostOccupied" }
-                        ? TurboTickSettings.T("TurboTick_HostOccupied")
-                        : TurboTickSettings.T("TurboTick_ConnectionFailed", error.Message);
+                    connectionFailure = error switch
+                    {
+                        NetworkException { Code: "HostOccupied" } => TurboTickSettings.T("TurboTick_HostOccupied"),
+                        // A bare "fingerprints differ" is a dead end: the player has no way to learn which mod
+                        // to fix. Point at the per-file manifest this client just wrote - diffing it against
+                        // the host's names the exact file - and show the fingerprint so the two sides can be
+                        // compared in one glance.
+                        NetworkException { Code: "ModHashMismatch" } => TurboTickSettings.T(
+                            "TurboTick_FingerprintMismatch", Fingerprint, exportFile),
+                        _ => TurboTickSettings.T("TurboTick_ConnectionFailed", error.Message),
+                    };
                     SetStatus(connectionFailure);
                 });
             }

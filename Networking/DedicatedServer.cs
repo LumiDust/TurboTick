@@ -326,9 +326,18 @@ public sealed partial class DedicatedServer : IAsyncDisposable
             var version = _lockedGameVersion ?? hello.GameVersion;
             var modHash = _lockedModHash ?? hello.ModHash;
             if (!string.Equals(version, hello.GameVersion, StringComparison.Ordinal))
+            {
+                Console.WriteLine($"[server] rejected {Describe(hello)}: game version is {hello.GameVersion}, room requires {version}");
                 throw new NetworkException("GameVersionMismatch", $"Game version mismatch: server requires exactly {version}.");
+            }
             if (!string.Equals(modHash, hello.ModHash, StringComparison.Ordinal))
+            {
+                // A refusal used to leave no trace, so "someone cannot join" could not be diagnosed from the
+                // server side at all. Name the peer and both fingerprints; the client writes the per-file
+                // breakdown next to its own copy, so these two lines plus that file identify the culprit.
+                Console.WriteLine($"[server] rejected {Describe(hello)}: mod fingerprint is {hello.ModHash}, room requires {modHash}");
                 throw new NetworkException("ModHashMismatch", "Simulation assemblies, XML, mod order or configuration differ from the server.");
+            }
             if (_lockedGameVersion is null || _lockedModHash is null)
             {
                 await SaveStateAsync(_policy, version, modHash, ct).ConfigureAwait(false);
@@ -771,6 +780,9 @@ public sealed partial class DedicatedServer : IAsyncDisposable
         finally { _stateGate.Release(); }
     }
 
+    /// <summary>One line that identifies a refused peer without leaking anything: who, which build, which fingerprint.</summary>
+    private static string Describe(ClientHello hello)
+        => $"peer '{hello.PlayerName}' (client {hello.ClientVersion}, game {hello.GameVersion})";
     /// <summary>The command kinds a client is allowed to send.
     ///
     /// Networking cannot reference the Simulation project that owns the codec constants, so this list is

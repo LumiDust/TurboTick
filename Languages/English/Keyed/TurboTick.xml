@@ -153,4 +153,8 @@
   <TurboTick_RoomDisconnected>Room disconnected</TurboTick_RoomDisconnected>
   <TurboTick_RoomDisconnectedGuide>You are not connected to this room. Reconnect, or use Manage server above to check and restart the server.</TurboTick_RoomDisconnectedGuide>
   <TurboTick_RoomConnecting>Connecting to the dedicated server. Please wait...</TurboTick_RoomConnecting>
+  <TurboTick_FingerprintMismatch>The dedicated server refused this client: the mod contents, load order or mod settings differ.
+Local fingerprint: {0}
+Per-file manifest: {1}
+Diff that file against the host's copy to name the exact mod and file. Common causes: both the workshop and a local copy of the same mod are installed (the packageId gains a _steam suffix), a different Harmony build, or a mod the other side does not have.</TurboTick_FingerprintMismatch>
 </LanguageData>
