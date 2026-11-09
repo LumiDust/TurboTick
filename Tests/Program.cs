@@ -1664,6 +1664,30 @@ await Test("load completion is tied to one generation and cannot revive a failed
     return Task.CompletedTask;
 });
 
+await Test("fingerprint ignores settings left behind by mods that are no longer loaded", () =>
+{
+    // RimWorld keeps every mod's settings file in Config forever, so a player who has tried many mod packs
+    // carries hundreds of files for mods they no longer run. Hashing all of them made the fingerprint depend
+    // on that history: one tester with 207 leftovers could not join a host who had none, while both ran the
+    // same three mods. These are the file names that actually broke it.
+    static string Id(string s) => s;                       // the game's sanitiser is identity for these names
+    var prefixes = new[]
+    {
+        TurboTick.Simulation.ModSettingsOwnership.Prefix("ludeon.rimworld", Id),
+        TurboTick.Simulation.ModSettingsOwnership.Prefix("brrainz.harmony", Id),
+        TurboTick.Simulation.ModSettingsOwnership.Prefix("lumidust.turbotick", Id),
+    };
+    Check(prefixes[2] == "Mod_lumidust.turbotick_", "prefix shape: " + prefixes[2]);
+    Check(TurboTick.Simulation.ModSettingsOwnership.IsOwnedBy("Mod_lumidust.turbotick_Settings.xml", prefixes),
+        "a loaded mod's settings are hashed");
+    Check(!TurboTick.Simulation.ModSettingsOwnership.IsOwnedBy("Mod_1321849735_RimefellerMod.xml", prefixes),
+        "a removed workshop mod's leftover is ignored");
+    Check(!TurboTick.Simulation.ModSettingsOwnership.IsOwnedBy(
+            "Mod___LocalCopy_Vanilla Expanded Framework_-9-5_VFEGlobal.xml", prefixes),
+        "a removed local-copy mod's leftover is ignored");
+    return Task.CompletedTask;
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();

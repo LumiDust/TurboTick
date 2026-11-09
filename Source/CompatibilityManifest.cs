@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TurboTick.Networking;
+using TurboTick.Simulation;
 using RimWorld;
 using Verse;
 
@@ -47,9 +48,14 @@ internal static class CompatibilityManifest
         }
         if (Directory.Exists(input.ConfigDirectory))
         {
+            // Only settings belonging to a mod that is actually loaded can change the simulation.
+            var ownedPrefixes = input.Mods
+                .Select(mod => ModSettingsOwnership.Prefix(mod.Id, GenText.SanitizeFilename))
+                .ToArray();
             foreach (var file in Directory.EnumerateFiles(input.ConfigDirectory, "Mod_*.xml")
                 .Where(p => !Path.GetFileName(p).Contains("turbotick", StringComparison.OrdinalIgnoreCase)
                          && !Path.GetFileName(p).Contains("mpturbo", StringComparison.OrdinalIgnoreCase))
+                .Where(p => ModSettingsOwnership.IsOwnedBy(Path.GetFileName(p), ownedPrefixes))
                 .OrderBy(Path.GetFileName, StringComparer.Ordinal))
             {
                 ct.ThrowIfCancellationRequested();
