@@ -360,7 +360,8 @@ def main():
     elif command == "health":
         health(paths[0])
     elif command == "update-status":
-        game, transcript, state = paths
+        # The branch is the fourth argument and is not a path: `paths` holds every argv entry, so slice it.
+        game, transcript, state = paths[:3]
         # The entrypoint passes the branch when it knows it; a container whose entrypoint predates that still
         # names the branch through the environment, which is how this fix reaches an existing deployment.
         branch = args[3] if len(args) > 3 else os.environ.get("TURBOTICK_GAME_BRANCH") or None
