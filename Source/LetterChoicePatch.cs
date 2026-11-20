@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using HarmonyLib;
 using RimWorld;
 using Verse;
@@ -28,79 +29,122 @@ namespace TurboTick;
 ///
 /// <para><b>Why the click must be suppressed locally.</b> `MakeChoices` writes the pawn's skills, traits and growth
 /// points. Letting it run on the replica would make that peer a second writer, and the two would disagree the moment
-/// the host's own copy answered the same letter. Suppressing it is not a UI gesture: the option's own
-/// `RemoveLetter(this)` (e.g. `ChoiceLetter_AcceptJoiner.Choices`, `:661356`) is part of the action, so the letter has
-/// to be removed here explicitly once the click has been reported.</para>
+/// the host's own copy answered the same letter.</para>
+///
+/// <para><b>Why the capture reads the dialog instead of `Choices`.</b> `Choices` is a lazy iterator: every
+/// enumeration constructs new `DiaOption` objects (`_lab/asm/Assembly-CSharp.decompiled.cs:182440-182460` style
+/// `yield return` bodies). `OpenLetter` enumerates it once to fill the `DiaNode` the window draws, so a second
+/// enumeration from a postfix yields *different* objects and `IndexOf(clicked)` is always -1. The options that are
+/// actually on screen are `dialog.curNode.options`, and that list is what this class captures.</para>
+///
+/// <para><b>Why an unrelated dialog is left alone.</b> A frozen replica still shows dialogs that are not letters
+/// (ritual confirmations, mod dialogs, the game's own node trees). A `DiaOption` is matched to a letter only through
+/// the `dialog` field the real `Dialog_NodeTree.GotoNode` stamps onto it; an option that belongs to no captured letter
+/// dialog falls through to vanilla, which used to be swallowed for every option in the game.</para>
 internal static class LetterChoiceState
 {
-    /// <summary>The options of the letter that was opened last, in the order the dialog shows them.</summary>
-    private static readonly List<DiaOption> options = [];
+    /// <summary>One letter dialog that is actually on screen: the letter, the window, and the option list the window
+    /// drew. The list identity is what makes the reported index the index the host will read.</summary>
+    private sealed class OpenLetterDialog
+    {
+        internal ChoiceLetter Letter = null!;
+        internal Dialog_NodeTree Dialog = null!;
+        internal List<DiaOption> Options = null!;
+    }
 
-    /// <summary>The letter those options belong to. A `DiaOption` carries no back-reference to its letter, so the
-    /// letter is remembered at open time instead of searched for at click time.</summary>
-    private static ChoiceLetter? activeLetter;
+    /// <summary>Bounded because a letter dialog is normally opened once and then answered; the oldest entry is
+    /// dropped first, and a stale entry can never match because matching is by window instance.</summary>
+    private const int MaxOpenDialogs = 8;
+
+    private static readonly List<OpenLetterDialog> openDialogs = [];
+    private static readonly FieldInfo? curNodeField = AccessTools.Field(typeof(Dialog_NodeTree), "curNode");
 
     internal static long ChoicesSent { get; private set; }
     internal static long ChoicesRefused { get; private set; }
     internal static string? LastRefusal { get; private set; }
-    internal static int CapturedCount => options.Count;
+    internal static int CapturedCount => openDialogs.Count == 0 ? 0 : openDialogs[^1].Options.Count;
 
-    /// <summary>Rebuilt every time a letter is opened, so the index the player clicks is the index the host will read.
-    /// The list is captured rather than recounted at click time because `Choices` is a lazy `IEnumerable`: enumerating
-    /// it twice may yield different objects, and the dialog the player is clicking is the one built from this pass.</summary>
-    internal static void Capture(ChoiceLetter letter)
+    /// <summary>Binds the letter to the window `OpenLetter` has just pushed and captures the options that window
+    /// actually draws. Called from the `OpenLetter` postfix, after `Find.WindowStack.Add(window)`.
+    ///
+    /// <para>`WindowStack.Add` appends, and its `RemoveWindowsOfType(window.GetType())` has already removed a previous
+    /// letter window of the same concrete type, so the last window on the stack is the one just built. Nothing is
+    /// re-enumerated: `curNode.options` is the list the draw loop iterates.</para></summary>
+    internal static void Capture(ChoiceLetter letter, WindowStack? stack)
     {
-        activeLetter = letter;
-        options.Clear();
-        try
+        openDialogs.RemoveAll(entry => ReferenceEquals(entry.Letter, letter));
+        if (stack is null || stack.Count == 0) { Refuse("信件窗口没有进 WindowStack"); return; }
+        var window = stack[stack.Count - 1];
+        if (window is not Dialog_NodeTree dialog || curNodeField is null)
         {
-            var count = 0;
-            foreach (var option in letter.Choices)
-            {
-                options.Add(option);
-                // A letter presents a handful; the bound stops a modded letter that yields forever from hanging the
-                // draw. It matches `SharedActions.MaxLetterOptions`.
-                if (++count >= 32) break;
-            }
+            Refuse("打开的窗口不是 Dialog_NodeTree");
+            return;
         }
-        catch (Exception error)
+        if (curNodeField.GetValue(dialog) is not DiaNode node)
         {
-            options.Clear();
-            Log.Warning("[TurboTick] 抉择信件选项枚举失败：" + error.GetType().Name + ": " + error.Message);
+            Refuse("信件对话框没有当前节点");
+            return;
         }
+        openDialogs.Add(new OpenLetterDialog { Letter = letter, Dialog = dialog, Options = node.options });
+        while (openDialogs.Count > MaxOpenDialogs) openDialogs.RemoveAt(0);
     }
 
-    /// <summary>Reports the click, or returns false so vanilla runs it here when this peer is the authority.</summary>
+    internal static void Capture(ChoiceLetter letter) => Capture(letter, Find.WindowStack);
+
+    /// <summary>Reports the click, or returns false so vanilla runs it here.
+    ///
+    /// <para>Returns false — the vanilla path, which is correct — in every case that is not a letter decision on this
+    /// frozen replica: the host, an unfrozen replica, an option belonging to another dialog, a link option, and an
+    /// option that is not in the dialog's top-level list. Returning false is what restores unrelated dialogs.</para>
+    ///
+    /// <para>On a reported click the action is <b>not</b> run locally, and the letter is <b>not</b> removed locally:
+    /// the host runs the option (including its own `RemoveLetter`) and the letter disappears from this stack when the
+    /// host's stack update arrives. `resolveTree` still closes the dialog here, because that is pure UI — otherwise
+    /// the modal window would keep input captured while the player waits for the host. `Option_Postpone` is exactly
+    /// this shape (`resolveTree = true`, no action) and must leave the letter in the list.</para></summary>
     internal static bool TryReport(DiaOption option)
     {
-        // On the host, and on a replica that is not frozen, the vanilla path is the correct one: the authority's own
-        // click runs `action` locally and every replica learns the result through the state channels that follow.
         if (!SharedActions.PlayerActing) return false;
         if (!AuthoritativeReplica.Frozen) return false;
-        var index = options.IndexOf(option);
+        var entry = DialogFor(option);
+        if (entry is null) return false; // not the letter dialog that is on screen: vanilla handles it
+
+        // `link` / `linkLateBind` navigate the local dialog tree (`DiaOption.Activate`, `:195632-195635`). They are
+        // not decisions, so they are not reported; the local navigation runs and the residual is recorded.
+        if (option.link != null || option.linkLateBind != null)
+        {
+            Refuse("导航选项留给本地处理");
+            return false;
+        }
+
+        var index = entry.Options.IndexOf(option);
         if (index < 0)
         {
-            // A click on an option this peer did not capture - a link inside a hyperlink, or a list rebuilt between
-            // draw and click. Reporting a guessed index would run a different option on the host, which is worse than
-            // doing nothing visible.
-            ChoicesRefused++;
-            LastRefusal = "选项不在本帧捕获的列表里";
-            return true;
+            // A sub-node option after navigation, or an option drawn from a list that is not this letter's top level.
+            // Guessing an index would run a different option on the host, which is worse than local behaviour.
+            Refuse("选项不属于该信件打开的顶层选项");
+            return false;
         }
-        var letter = activeLetter;
-        if (letter is null || letter.ID == 0)
+
+        var letter = entry.Letter;
+        if (letter.ID == 0)
         {
-            ChoicesRefused++;
-            LastRefusal = "找不到选项所属的信件";
-            return true;
+            Refuse("找不到选项所属的信件");
+            return false;
         }
+
         SharedActions.PublishLetterChoice(letter.ID, index);
         ChoicesSent++;
-        // The letter is answered as far as this peer is concerned: the host runs the option, and its own copy removes
-        // the letter, whose removal reaches us with the next stack update. Removing it here too keeps the two stacks
-        // in step without waiting for that frame and stops the player clicking twice.
-        if (option.resolveTree) RemoveLetter(letter.ID);
+        if (option.resolveTree && option.dialog != null) option.dialog.Close();
         return true;
+    }
+
+    private static OpenLetterDialog? DialogFor(DiaOption option)
+    {
+        if (option.dialog is not Dialog_NodeTree dialog) return null;
+        for (var i = openDialogs.Count - 1; i >= 0; i--)
+            if (ReferenceEquals(openDialogs[i].Dialog, dialog)) return openDialogs[i];
+        return null;
     }
 
     internal static void Refuse(string reason)
@@ -109,6 +153,8 @@ internal static class LetterChoiceState
         LastRefusal = reason;
     }
 
+    /// <summary>Growth-moment letters answer through `MakeChoices`, not through a `DiaOption`; its reporter still
+    /// removes the local copy so the button cannot be pressed twice. Kept as an entry point for that patch.</summary>
     internal static void Remove(int letterId) => RemoveLetter(letterId);
 
     private static void RemoveLetter(int letterId)
@@ -128,12 +174,13 @@ internal static class LetterChoiceState
 /// <summary>Captures the option list at the moment the letter is opened.
 ///
 /// <para>`ChoiceLetter.OpenLetter` (`:182872-182878`) is the one code path every `ChoiceLetter` goes through: it builds
-/// a `DiaNode` from `Choices` and pushes it onto the window stack. Capturing in the postfix means the captured order is
-/// the order the dialog shows, for all eleven subclasses, without patching any of them.</para></summary>
+/// a `DiaNode` from `Choices`, wraps it in `Dialog_NodeTreeWithFactionInfo`, and pushes that window. Capturing in the
+/// postfix reads the options the window really holds, for all eleven subclasses, without patching any of them and
+/// without enumerating the lazy `Choices` a second time.</para></summary>
 [HarmonyPatch(typeof(ChoiceLetter), nameof(ChoiceLetter.OpenLetter))]
 internal static class LetterOpenPatch
 {
-    private static void Postfix(ChoiceLetter __instance) => LetterChoiceState.Capture(__instance);
+    private static void Postfix(ChoiceLetter __instance) => LetterChoiceState.Capture(__instance, Find.WindowStack);
 }
 
 /// <summary>Intercepts the click. `Activate` is where every option of every letter ends up (`:195621-195636`), so a
@@ -141,7 +188,8 @@ internal static class LetterOpenPatch
 ///
 /// <para>Returning false skips the whole method for a replica: the click sound, the `OwningDialog.Close()` and the
 /// option's own `action`. The sound is skipped on purpose — the host plays its own when it executes, and a replica
-/// playing both would double it.</para></summary>
+/// playing both would double it. The dialog close is re-issued by `LetterChoiceState.TryReport` for a reported click;
+/// every other option returns false and keeps vanilla's close.</para></summary>
 [HarmonyPatch(typeof(DiaOption), "Activate")]
 internal static class LetterOptionActivatePatch
 {

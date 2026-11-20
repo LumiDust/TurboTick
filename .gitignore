@@ -63,3 +63,8 @@ docker/
 
 # Windows console device name leaking into the worktree
 CON
+
+# Runtime repro harnesses: NuGet/SDK scratch and decompiled reference dumps are local-only inputs, not sources.
+Tests/ScribeRuntime/tmp/
+Tests/ScribeRuntime/inspection/
+Tests/LetterRuntime/tmp/

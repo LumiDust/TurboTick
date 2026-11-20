@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Globalization;
 using HarmonyLib;
 using RimWorld;
@@ -482,6 +482,13 @@ internal static class AuthoritativeReplica
         // value=True), 翻转 0 次 on the replica, and its forbidden count climbing to 1296 while the host's items
         // were being re-forbidden by its own replica.
         using var stateWrite = SharedActions.StateWrite();
+        // Fresh cross-reference index for this frame. `ScribeBridge.Load` resolves a fragment's references against an
+        // index of the live world, and the live world moves inside this very frame: `Created` below builds objects and
+        // a pawn can pick something up. Measured before the fix: only the fragment's own exposables were registered, so
+        // `Faction_0` was absent, `Scribe_References.Look` wrote null, and vanilla's `Settlement.ExposeData` destroyed
+        // the settlement with "had null faction on load". Rebuilding is lazy - a frame that loads no fragment pays
+        // nothing beyond clearing three fields.
+        ScribeBridge.InvalidateReferenceIndex();
         // A predictive peer must publish its OWN clock, not the host's. Observing the host tick told the
         // barrier the peer was caught up while the local simulation sat 2400 ticks behind, so no catch-up
         // ever ran and every position comparison was between two different moments in time.

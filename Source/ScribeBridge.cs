@@ -1,4 +1,6 @@
+using System.Collections;
 using System.Collections.Generic;
+using RimWorld;
 using System.Reflection;
 using System.Xml;
 using HarmonyLib;
@@ -123,6 +125,9 @@ internal static class ScribeBridge
         // def is not guaranteed on every path. Captured before the load, restored after it if the load cleared it.
         var worldObject = value as WorldObject;
         var worldDefBefore = worldObject?.def;
+        // A state refresh is not a save-game load. Settlement/MapParent PostLoadInit may destroy the
+        // world object (and its live map); only newly constructed world objects need that lifecycle.
+        var liveWorldObject = worldObject is not null && Find.WorldObjects?.Contains(worldObject) == true;
         // Cheap field reads only: no serialisation on this path.
         var mapBefore = thing?.Map;
         var positionBefore = thing?.Position ?? IntVec3.Invalid;
@@ -158,7 +163,7 @@ internal static class ScribeBridge
             // ExposeData re-run in both later passes. Calling ExposeData directly skipped that, so reference
             // lists and nested PostLoadInit were only ever half applied.
             loader.crossRefs.RegisterForCrossRefResolve(value);
-            loader.initer.RegisterForPostLoadInit(value);
+            if (!liveWorldObject) loader.initer.RegisterForPostLoadInit(value);
             // The object being loaded, plus anything the caller pre-registered, must be in the load-id directory or the
             // resolve pass silently drops their references. A real load registers everything the save names before any
             // ExposeData runs; a fragment names only what it holds, so the object itself is the one guaranteed entry.
@@ -169,6 +174,11 @@ internal static class ScribeBridge
             if (referenced is not null)
                 foreach (var each in referenced) RegisterReference(each);
             value.ExposeData();
+            // Deep objects have now registered their IDs. Resolve those before consulting the live
+            // graph, so an old cached object never shadows a replacement created by this fragment.
+            foreach (var exposable in loader.crossRefs.crossReferencingExposables)
+                RegisterReference(exposable as ILoadReferenceable);
+            if (!PrepareReferences(loader, value)) return false;
             // Two-pass load, in vanilla's order: the objects registered their wanted references above, so
             // resolve them now. `curXmlParent` must be null here - the resolve pass works from paths alone,
             // and a non-null node makes `EnterNode` refuse a label the fragment does not carry, which would
@@ -176,14 +186,14 @@ internal static class ScribeBridge
             Scribe.mode = LoadSaveMode.ResolvingCrossRefs;
             loader.curXmlParent = null;
             loader.curPathRelToParent = null;
-            ResolveReferences(loader);
+            if (!ResolveReferences(loader)) return false;
             // RimWorld calls ExposeData again in PostLoadInit during a real load. Mods rely on it:
             // their `if (Scribe.mode == LoadSaveMode.PostLoadInit) { ...rebuild caches... }` branch never ran
             // here, so a component's derived state stayed half applied. Nested objects (the pawn inside a
             // corpse) were skipped entirely by the hand-rolled call, so the whole set runs through the
             // queue vanilla uses.
             loader.initer.DoAllPostLoadInits();
-            PostLoad(value);
+            if (!liveWorldObject) PostLoad(value);
             return true;
         }
         catch (Exception error)
@@ -195,6 +205,7 @@ internal static class ScribeBridge
         finally
         {
             try { loader.crossRefs.Clear(errorIfNotEmpty: false); } catch (Exception) { }
+            loader.initer.Clear();
             loader.curXmlParent = previousParent;
             loader.curPathRelToParent = previousPath;
             // Restore the parent too, or the next load in the same frame keys its reference lists under this
@@ -223,8 +234,9 @@ internal static class ScribeBridge
     /// 1126 `/sourcePrecept` nulls, while "Could not get load ID" - the actual key-mismatch symptom - was
     /// zero. So the registration work is correct and only its reporting is wrong. Counted here and logged
     /// once per 600 loads instead.</summary>
-    private static void ResolveReferences(ScribeLoader loader)
+    private static bool ResolveReferences(ScribeLoader loader)
     {
+        var success = true;
         Scribe.mode = LoadSaveMode.ResolvingCrossRefs;
         var exposables = loader.crossRefs.crossReferencingExposables;
         for (var i = 0; i < exposables.Count; i++)
@@ -239,6 +251,7 @@ internal static class ScribeBridge
             }
             catch (Exception error)
             {
+                success = false;
                 Log.Error("[TurboTick] 解析引用失败：" + exposables[i].GetType().Name + ": " + error);
             }
         }
@@ -252,6 +265,146 @@ internal static class ScribeBridge
         if (total % 600 == 0 && UnreadReferences > 0)
             Log.Message($"[TurboTick] 引用残留 {UnreadReferences} 条（{total} 次回灌，最近一次 {leftover} 条）。"
                 + "存档里本来为空的引用会被注册成 null 且无人读取，属预期。");
+        return success;
+    }
+
+    private static Game? referenceGame;
+    private static readonly Dictionary<string, ILoadReferenceable> liveReferences = new(StringComparer.Ordinal);
+    private static readonly Dictionary<Type, FieldInfo[]> graphFields = new();
+    private static bool standardReferencesIndexed;
+    private static bool graphReferencesIndexed;
+
+    /// <summary>Called once before applying an authoritative frame. The directory is lazy and shared
+    /// by all fragments in that frame; a different Game also invalidates it (load/reconnect).</summary>
+    internal static void InvalidateReferenceIndex()
+    {
+        referenceGame = Current.Game;
+        liveReferences.Clear();
+        standardReferencesIndexed = graphReferencesIndexed = false;
+    }
+
+    private static void IndexReference(ILoadReferenceable? value)
+    {
+        if (value is null) return;
+        var id = value.GetUniqueLoadID();
+        if (!string.IsNullOrEmpty(id)) liveReferences.TryAdd(id, value);
+    }
+
+    private static void IndexReferences(IEnumerable? values)
+    {
+        if (values is null) return;
+        foreach (var value in values) IndexReference(value as ILoadReferenceable);
+    }
+
+    private static void IndexStandardReferences()
+    {
+        if (standardReferencesIndexed) return;
+        standardReferencesIndexed = true;
+        IndexReferences(Find.FactionManager?.AllFactionsListForReading);
+        IndexReferences(Find.WorldObjects?.AllWorldObjects);
+        IndexReferences(Find.WorldPawns?.AllPawnsAliveOrDead);
+        IndexReferences(Find.QuestManager?.QuestsListForReading);
+        IndexReferences(Find.IdeoManager?.IdeosListForReading);
+        if (Current.Game?.Maps is not { } maps) return;
+        foreach (var map in maps)
+        {
+            IndexReference(map);
+            IndexReferences(map.mapPawns?.AllPawns);
+            IndexReferences(map.listerThings?.AllThings);
+        }
+    }
+
+    /// <summary>Fallback for held things, quest parts, precepts, policies, and mod-owned state: walk
+    /// instance fields rooted in Game, not a fixed list of supported reference types. No properties,
+    /// ExposeData, static fields, or engine/Def graphs are executed. Reference identity breaks cycles.
+    /// Pure value arrays (cell grids) are skipped without visiting their cells.</summary>
+    private static void IndexLiveGraph(object? root)
+    {
+        var pending = new Stack<object>();
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        if (root is not null) pending.Push(root);
+        while (pending.Count > 0)
+        {
+            var item = pending.Pop();
+            var type = item.GetType();
+            if (item is string or Def or Type or MemberInfo or Delegate || type.IsPrimitive || type.IsEnum
+                || item is decimal || !seen.Add(item)) continue;
+            IndexReference(item as ILoadReferenceable);
+            if (item is Array array)
+            {
+                var element = type.GetElementType()!;
+                if (element.IsPrimitive || element.IsEnum || element == typeof(string)) continue;
+                foreach (var child in array) if (child is not null) pending.Push(child);
+                continue;
+            }
+            if (!graphFields.TryGetValue(type, out var fields))
+            {
+                var list = new List<FieldInfo>();
+                for (var t = type; t is not null && t != typeof(object); t = t.BaseType)
+                    foreach (var field in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                        if (!field.FieldType.IsPrimitive && !field.FieldType.IsEnum && field.FieldType != typeof(string)
+                            && !field.FieldType.IsPointer && !typeof(Delegate).IsAssignableFrom(field.FieldType)) list.Add(field);
+                fields = list.ToArray();
+                graphFields.Add(type, fields);
+            }
+            // Reflect collections' backing fields too: custom IEnumerable implementations may contain
+            // additional references, and iterators/getters may execute mod code or mutate the world.
+            foreach (var field in fields)
+                if (field.GetValue(item) is { } child) pending.Push(child);
+        }
+    }
+
+    private static bool PrepareReferences(ScribeLoader loader, IExposable value)
+    {
+        if (!ReferenceEquals(referenceGame, Current.Game)) InvalidateReferenceIndex();
+        directoryField ??= AccessTools.Field(typeof(CrossRefHandler), "loadedObjectDirectory");
+        objectsField ??= AccessTools.Field(typeof(LoadedObjectDirectory), "allObjectsByLoadID");
+        var directory = directoryField?.GetValue(loader.crossRefs);
+        if (directory is null || objectsField?.GetValue(directory) is not IDictionary known)
+            throw new InvalidOperationException("Scribe loaded-object directory is unavailable");
+        var wanted = new HashSet<string>(StringComparer.Ordinal);
+        idsReadField ??= AccessTools.Field(typeof(LoadIDsWantedBank), "idsRead");
+        idListsReadField ??= AccessTools.Field(typeof(LoadIDsWantedBank), "idListsRead");
+        if (idsReadField?.GetValue(loader.crossRefs.loadIDs) is not IDictionary singles
+            || idListsReadField?.GetValue(loader.crossRefs.loadIDs) is not IDictionary lists)
+            throw new InvalidOperationException("Scribe reference request bank is unavailable");
+        foreach (var record in singles.Values)
+            AddWanted(AccessTools.Field(record.GetType(), "targetLoadID").GetValue(record) as string);
+        foreach (var record in lists.Values)
+            if (AccessTools.Field(record.GetType(), "targetLoadIDs").GetValue(record) is IEnumerable ids)
+                foreach (var id in ids) AddWanted(id as string);
+        foreach (var id in wanted)
+        {
+            if (known.Contains(id)) continue;
+            IndexStandardReferences();
+            if (!liveReferences.ContainsKey(id) && !graphReferencesIndexed)
+            {
+                IndexLiveGraph(Current.Game);
+                graphReferencesIndexed = true;
+            }
+            // Standalone trackers and explicit caller-owned roots can be outside Game.
+            if (!liveReferences.ContainsKey(id)) IndexLiveGraph(value);
+            if (!liveReferences.TryGetValue(id, out var target))
+            {
+                Log.Warning("[TurboTick] Scribe fragment has unresolved reference " + id + "; skipping reference/lifecycle passes.");
+                return false;
+            }
+            RegisterReference(target);
+        }
+        // Verify single-reference types before assignment; an ID collision must not erase a live field.
+        foreach (var record in singles.Values)
+        {
+            var type = record.GetType();
+            var id = AccessTools.Field(type, "targetLoadID").GetValue(record) as string;
+            var expected = AccessTools.Field(type, "targetType").GetValue(record) as Type;
+            if (!string.IsNullOrEmpty(id) && id != "null" && expected is not null
+                && (!known.Contains(id) || !expected.IsInstanceOfType(known[id]))) return false;
+        }
+        return true;
+        void AddWanted(string? id)
+        {
+            if (!string.IsNullOrEmpty(id) && id != "null") wanted.Add(id);
+        }
     }
 
     private static FieldInfo? idsReadField;

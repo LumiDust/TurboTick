@@ -8,7 +8,7 @@ using Verse;
 
 namespace TurboTick;
 
-/// <summary>The scribed state of a world object, minus the four fields that already have their own channel.
+/// <summary>The full scribed state of a world object, with a separate change key that excludes identity and tick fields.
 ///
 /// <para><b>Why this channel exists.</b> <see cref="WorldObjectSync"/> sends where an object is: <c>ID</c>, tile, layer
 /// and def name. Everything else a world object carries was never sent at all, because a world object is not a map thing:
@@ -185,7 +185,7 @@ internal static class WorldObjectStateSync
                 if (each is null || each.ID != state.Id) continue;
                 // The def name is the only guard against id reuse across a save that grew between peers - the same reason
                 // `WorldObjectSync.Apply` checks it before moving anything.
-                if (state.Def is { Length: > 0 } expected && each.def?.defName != expected) return;
+                if (state.Def is { Length: > 0 } expected && each.def is not null && each.def.defName != expected) return;
                 // Repair first. 0.7.3 sent the stripped fragment, so a client that ran it has objects whose `def` is
                 // already null; loading another fragment onto one of those throws inside `ExposeData` (`def.comps`) and
                 // never recovers. The def name travels on every row, so the field can be rebuilt without a reload.
@@ -215,6 +215,17 @@ internal static class WorldObjectStateSync
                 // object for the rest of the session.
                 if (each.def is null && defBefore is not null) each.def = defBefore;
                 StatesApplied++;
+                // Bounded evidence, not a permanent log stream: a run whose fragment count never moves is a run that
+                // proved nothing. The first five and then every hundredth show the id, the verdict and - for a
+                // settlement, which is what actually broke in the field - the faction reference before and after.
+                if (StatesApplied <= 5 || StatesApplied % 100 == 0)
+                {
+                    var faction = each is RimWorld.Planet.Settlement settlement
+                        ? $" faction={settlement.Faction?.GetUniqueLoadID() ?? "null"}"
+                        : "";
+                    Log.Message($"[TurboTick] 世界物件片段 #{state.Id} {each.def?.defName ?? "?"} 应用成功"
+                        + $"（累计 {StatesApplied}，失败 {ApplyFailures}）{faction}");
+                }
                 return;
             }
         }

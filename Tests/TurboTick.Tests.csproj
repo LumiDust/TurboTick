@@ -7,6 +7,10 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="Networking/**/*.cs" />
+    <!-- Their own console projects: the runtime harnesses link the real game assemblies and have `Main` of their own,
+         so the default **/*.cs glob would compile them into this assembly and trip on their decompiled sources. -->
+    <Compile Remove="ScribeRuntime/**" />
+    <Compile Remove="LetterRuntime/**" />
     <ProjectReference Include="../Networking/TurboTick.Networking.csproj" />
     <ProjectReference Include="../Simulation/TurboTick.Simulation.csproj" />
   </ItemGroup>
