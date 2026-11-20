@@ -2,10 +2,11 @@
 
 ## 0.7.1：镜像就是部署单位
 
-0.7.1 的专服以 **`ghcr.io/lumidust/turbotick-headless:0.7.1`（linux/amd64）** 为发布单位，容器里跑的是
-加载真实 RimWorld 的权威副本：世界在一端推进，另一端的副本按状态通道逐项跟随。部署步骤、变量表、
-`installer` 阶段与文件清单见 **[deploy/container/README.md](container/README.md)**，本文余下部分保留
-≤0.6.0 的旧目录布局，只用于回退参考。
+0.7.1 的**服务端**以 **`ghcr.io/lumidust/turbotick-headless:0.7.1`（linux/amd64）** 为发布单位，容器里跑的是
+加载真实 RimWorld 的权威副本：世界在服务端推进，玩家端的副本按状态通道逐项跟随。**玩家端不从这里安装**——
+客户端 Mod 走 [Steam 创意工坊](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013)，订阅由 Steam 更新。
+部署步骤、变量表、`installer` 阶段与文件清单见 **[deploy/container/README.md](container/README.md)**，
+本文余下部分保留 ≤0.6.0 的旧目录布局，只用于回退参考。
 
 要点（与旧版不同的部分）：
 

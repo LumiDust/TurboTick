@@ -158,31 +158,38 @@ jobs:
             artifacts/TurboTick-${{ needs.build-test-package.outputs.version }}-headless-installer.zip
             artifacts/SHA256SUMS
           body: |
-            ## 0.7.1：镜像即部署单位
+            ## 0.7.1：客户端走工坊，服务端走镜像
 
-            专服重新以**加载真实 RimWorld 的权威副本**发布：世界在服务器上推进，玩家端副本按状态通道跟随，
-            动画与寻路保持原生行为。部署见 `deploy/README.md` 与 `deploy/container/README.md`。
+            - **玩家**：订阅 [Steam 创意工坊](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013)，
+              由 Steam 更新。Release 里的 `mod-1.7.zip` 与镜像 payload 同字节，只用于离线/锁版本/自建分发。
+            - **服主**：`ghcr.io/lumidust/turbotick-headless:0.7.1`（linux/amd64）。镜像不含游戏本体，
+              `/game` 在镜像内是空目录；游戏、Harmony、存档都在宿主卷里。
 
-            ## 本轮通道补全
+            ## 服务端部署
 
-            - 尸体追踪（`UnnaturalCorpseTracker` 11 个字段）、消息历史与目标格（副本点消息会移动镜头）、
-              视觉载体（`Bombardment` 弹丸等只画不打的物件）、`PlaySettings` 十一个默认医疗档位、方案表整表（服饰/药品/饮食/阅读）。
-            - 多据点七道闸门：自动重建、地形重建、自动铺顶、据点禁取（呈现为 forbidden 让原版 AI 自己避开）、
-              格子上工、谁用谁的货付款、派活拦截。
-            - 台账（`_lab/LEDGER-TRIAGE.md`）清零：`419 x / 0 - / 0 ~`，每一行都有能在 dump 里指到的判词。
+            ```sh
+            mkdir -p /srv/turbotick/data/{game,profile,state,steam-cache} && chown -R 10001:10001 /srv/turbotick/data
+            cd /srv/turbotick && unzip TurboTick-0.7.1-headless-installer.zip && cp .env.example .env
+            docker compose --env-file .env config --quiet
+            docker compose --profile setup run --rm installer install   # 首次：SteamCMD 装游戏 + Harmony
+            docker compose up -d headless
+            docker compose --profile watch up -d update-check           # 每小时检测游戏新 build
+            ```
 
-            ## 部署
+            细节（变量表、目录权限、更新与回滚）见 `deploy/container/README.md`。
 
-            - 镜像 `ghcr.io/lumidust/turbotick-headless:0.7.1`（linux/amd64），payload 与客户端 Mod zip 同字节，
-              `run` 前逐文件校验已安装的 `Mods/TurboTick`。
-            - 老仓库内的 `docker/` 目录已从版本库移除，只有根 `Dockerfile` + `deploy/container/` 一套入口。
-            - `docker-compose.yml` 的镜像可通过 `TURBOTICK_IMAGE` 指向本地构建标签。
+            ## 本轮改动
 
-            ## 下载
+            - 状态通道补全：尸体追踪、消息历史与目标格、视觉载体、`PlaySettings` 医疗默认档、方案表整表。
+            - 多据点七道闸门：自动重建、地形重建、自动铺顶、据点禁取、格子上工、谁用谁的货付款、派活拦截。
+            - 服务端自动检测游戏更新（`/state/game-update.json`），镜像不含游戏本体（容器测试已钉住）。
+            - `docker/` 旧目录移出版本库，只有根 `Dockerfile` + `deploy/container/` 一套入口。
 
-            - `mod-1.7.zip`：所有玩家使用，必须与专服同版本（0.7.1）。
-            - `headless-installer.zip`：专服部署包（compose、环境模板、SteamCMD 安装脚本与同字节 Mod）。
+            ## 附件说明
+
+            - `headless-installer.zip`：服务端部署包（compose、环境模板、SteamCMD 安装脚本与同字节 Mod）。
             - `coordinator-linux-x64`：旧形态协调器，不需要安装游戏本体。
+            - `mod-1.7.zip`：与镜像 payload 同字节，供离线/固定版本使用。
             - `SHA256SUMS`：全部运行包的校验值。
 
             [安装与使用](https://github.com/LumiDust/TurboTick#readme) · [详细服务器部署](https://github.com/LumiDust/TurboTick/blob/main/deploy/README.md)

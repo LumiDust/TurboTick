@@ -3,64 +3,84 @@
 [![Build](https://github.com/LumiDust/TurboTick/actions/workflows/build.yml/badge.svg)](https://github.com/LumiDust/TurboTick/blob/main/.github/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**0.7.1 协调器架构 · RimWorld 1.7 · 网络协议 v5**
+**0.7.1 · RimWorld 1.7 · 网络协议 v5**
 
-独立的共享殖民地联机 Mod，支持多人共同操作同一世界。由**客户端 Mod**和**协调器专服**组成：每个玩家在本地完整模拟这份殖民地，专服只排定操作顺序、按最慢玩家的进度推进时间线并保存快照，自身不跑殖民地模拟。游戏端依赖 [Harmony 3](https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077)；不依赖其他联机 Mod。
+共享殖民地联机 Mod。玩家端是**客户端 Mod**（Steam 创意工坊分发），服务端是**容器镜像**：镜像里跑一份加载真实
+RimWorld 的**权威副本**，世界在服务器上推进，玩家端副本按状态通道逐项跟随（小人、物品、世界物件、尸体追踪、
+消息与档案、视觉载体、方案表……），动画与寻路仍是原生行为。游戏端依赖
+[Harmony 3](https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077)，不依赖其他联机 Mod。
+
+## 谁从哪里拿
+
+| 谁 | 从哪拿 | 说明 |
+|---|---|---|
+| **玩家** | [Steam 创意工坊 3834465013](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013) | 订阅即可，版本由 Steam 更新；**不要**手工塞 zip，否则容易和专服版本不一致 |
+| **服主** | `ghcr.io/lumidust/turbotick-headless:0.7.1`（linux/amd64） | 服务端镜像，**不含游戏本体**；游戏、Harmony、存档都在宿主卷里 |
+| 离线 / 固定版本 | Release 里的 `TurboTick-0.7.1-mod-1.7.zip` | 与镜像 payload **同字节**；只在不能连工坊（离线、锁版本、自建分发）时用 |
+| 无游戏本体的旧形态 | `TurboTick-0.7.1-coordinator-linux-x64` | 0.6.1–0.7.0 的协调器，供旧局或不装游戏的机器回退 |
+
+一句话：**客户端走工坊，服务端走镜像**。Release 里的 `mod-1.7.zip` 是服务端 payload 与离线玩家的同一份字节，
+不是玩家的常规获取途径。
 
 ## 专服形态：镜像里的权威副本
-
-0.7.1 的专服以 **容器镜像** 为发布单位（`ghcr.io/lumidust/turbotick-headless:0.7.1`，linux/amd64）。
-镜像里跑的是**加载真实 RimWorld 的权威副本**：世界在服务器上推进，玩家端的副本按状态通道逐项跟随
-（小人、物品、世界物件、尸体追踪、消息与档案、视觉载体、方案表……），所以动画与寻路仍是原生行为。
-部署见 [`deploy/container/README.md`](deploy/container/README.md)。
 
 | 方案 | 模拟器数量 | 动画与寻路 | 需要同步的份数 |
 |---|---|---|---|
 | **权威副本 + 每端副本**（0.7.1 默认） | 1 个权威 + N 个副本 | 原生正确 | N 份状态差量 |
 | 协调器 + 每端模拟（0.6.1–0.7.0） | N | 原生正确 | N 份命令与回执 |
 
-协调器（自包含单文件、不加载游戏）仍在发布附件里，供不装游戏本体、或只有 0.6.1–0.7.0 客户端的旧局使用。
+镜像只装服务端软件：TurboTick payload、部署脚本、SteamCMD bootstrap。`/game` 在镜像内是**空目录**，
+RimWorld 本体、DLC、Harmony、存档、账号材料一律由宿主卷提供。启动前会逐文件校验 `Mods/TurboTick`
+与镜像内容一致，缺失/改动/多余都要求停服重装。
 
-## 下载与安装
-
-从 [0.7.1 Release](https://github.com/LumiDust/TurboTick/releases/tag/v0.7.1) 下载配套附件；玩家也可订阅 [Steam 创意工坊](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013)。固定世界请保留同一次 Release 的原包，避免客户端与专服在不同时间更新。
-
-| 附件 | 用途 |
-|---|---|
-| `TurboTick-0.7.1-mod-1.7.zip` | 玩家客户端；解压后把完整 `TurboTick` 目录放入游戏 `Mods` |
-| `TurboTick-0.7.1-headless-installer.zip` | 专服部署包：`docker-compose.yml`、`.env.example`、`scripts/steamcmd/`、`deploy/container/` 与同字节的 `TurboTick/` |
-| `TurboTick-0.7.1-coordinator-linux-x64` | 旧形态协调器；自包含单文件，**不需要安装游戏本体** |
-
-玩家启用 Harmony、TurboTick 和与专服完全一致的其他模组后重启游戏。
-
-## 部署专服
-
-镜像部署（推荐）：
+## 服务端部署（镜像）
 
 ```sh
-# 需要 Docker Engine 与 Compose v2；宿主准备 4 个数据目录（uid/gid 10001）
+# 0) 前提：x86-64 Linux、Docker Engine + Compose v2、能下载 RimWorld 的 Steam 账号
+mkdir -p /srv/turbotick/data/{game,profile,state,steam-cache}
+chown -R 10001:10001 /srv/turbotick/data
+
+# 1) 取部署文件（Release 里的 headless-installer.zip，或仓库根 docker-compose.yml + .env.example）
+cd /srv/turbotick
+unzip TurboTick-0.7.1-headless-installer.zip
+cp .env.example .env          # 目录、端口、UID/GID、可选代理
+
+# 2) 校验配置
 docker compose --env-file .env config --quiet
-docker compose --profile setup run --rm installer install   # 首次：SteamCMD 登录并安装游戏 + Harmony
-docker compose up -d headless                               # 之后只起 run
+
+# 3) 首次安装：SteamCMD 登录 → 装 RimWorld + Harmony（交互式，密码/令牌只进 SteamCMD 自己的提示）
+docker compose --profile setup run --rm installer install
+
+# 4) 起服
+docker compose up -d headless
+
+# 5) 游戏更新检测（可选但推荐）：每小时问一次 Steam，结果写 /state/game-update.json
+docker compose --profile watch up -d update-check
 ```
 
-`/game` 放 RimWorld 本体与 `Mods/Harmony`，`/profile` 放配置与存档，`/state` 放运行状态；
-镜像里**不含游戏本体**（`/game` 在镜像内是空目录），游戏更新检测由 `update-check` 服务负责——
-`docker compose --profile watch up -d update-check` 会每小时写 `/state/game-update.json`（见部署文档）；
-镜像会在启动前逐文件校验 `Mods/TurboTick` 与镜像内容是否一致。也可以
-`docker build -t turbotick-headless:0.7.1 .` 本地构建后把 `TURBOTICK_IMAGE` 指向该标签。
-完整变量表、目录权限与文件清单见 [`deploy/container/README.md`](deploy/container/README.md)。
+- `/game`：RimWorld 本体 + `Mods/Harmony`（run 阶段只读）；`/profile`：配置与存档；`/state`：运行状态与更新状态。
+- 游戏有新 build 时：停服 → `docker compose --profile setup run --rm installer install --user ACCOUNT` → 起服。
+- 换版本镜像：`TURBOTICK_IMAGE=ghcr.io/lumidust/turbotick-headless:<版本>` 后 `docker compose up -d headless`，
+  payload 不一致会拒绝启动并提示重装。
+- 本地构建（无 ghcr 出口时）：`docker build -t turbotick-headless:0.7.1 .`，再把 `TURBOTICK_IMAGE` 指向该标签。
+- 完整变量表、目录权限、文件清单与回滚：见 [`deploy/container/README.md`](deploy/container/README.md)。
 
-协调器（旧形态，不需要游戏本体）：
+协调器（旧形态，不需要游戏本体）：`deploy/turbotick-coordinator.service` + `TurboTick-0.7.1-coordinator-linux-x64`，
+参数见 `--help`。
 
-```sh
-install -m 0755 TurboTick-0.7.1-coordinator-linux-x64 /srv/turbotick/TurboTick.Server
-mkdir -p /srv/turbotick/state
-printf '%s' 'YOUR-ADMIN-PASSWORD' > /srv/turbotick/secrets/admin-password
-chmod 400 /srv/turbotick/secrets/admin-password
-```
+## 客户端安装
 
-`deploy/turbotick-coordinator.service` 是可直接使用的 systemd 单元；`--help` 列全部参数。
+1. 订阅工坊 [Harmony 2009463077](https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077) 与
+   [TurboTick 3834465013](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013)。
+2. 模组顺序与专服保持一致（专服的 `ModsConfig.xml` 在 `/profile/Config`，可对照）。
+3. 游戏内「多人游戏 → 加入游戏」，填 `服务器地址:30572`。
+
+## 维护者：工坊与镜像的发布链
+
+客户端只有一条常规发布途径——工坊：`scripts/prepare-workshop.ps1` 从 Release 的 mod zip 生成工坊目录，
+按 [`docs/STEAM_WORKSHOP.md`](docs/STEAM_WORKSHOP.md) 上传；玩家订阅后由 Steam 分发与更新。
+服务端只有一条常规发布途径——镜像：CI 在打 `v*` 标签时用**同一份** mod zip 做 payload 构建
+`ghcr.io/lumidust/turbotick-headless:<版本>` 并跑容器契约测试，两条途径因此永远是同字节。
 
 ## 主持与加入
 

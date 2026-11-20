@@ -4,7 +4,9 @@
 
 镜像：`ghcr.io/lumidust/turbotick-headless:0.6.0`，仅 **linux/amd64**，基础镜像 Ubuntu 24.04。它启动原生 Linux RimWorld 常驻模拟，客户端仍参与锁步模拟。旧 `ghcr.io/lumidust/turbotick-server:0.5.1` 是已退役独立 .NET 网络服的历史镜像，保留原标签，不将新内容覆盖到旧标签。
 
-镜像仅包含官方 SteamCMD 小型 bootstrap、运行库、部署脚本以及已构建的完整 TurboTick Mod。**原版游戏、DLC、Harmony、Steam 凭据均不在镜像内**；前两者由安装阶段准备，Harmony 从官方工坊独立下载。构建镜像不编译 Mod。游戏 build、完整 Mod 文件、加载顺序与配置必须同所有客户端一致。
+镜像只服务**服务端**：玩家端 Mod 由 Steam 创意工坊订阅分发，镜像里的 TurboTick payload 与其同字节，
+启动前会校验宿主 `/game/Mods/TurboTick` 与镜像一致。镜像仅包含官方 SteamCMD 小型 bootstrap、运行库、
+部署脚本以及已构建的完整 TurboTick Mod。**原版游戏、DLC、Harmony、Steam 凭据均不在镜像内**；前两者由安装阶段准备，Harmony 从官方工坊独立下载。构建镜像不编译 Mod。游戏 build、完整 Mod 文件、加载顺序与配置必须同所有客户端一致。
 
 本文命令在含根 Compose 文件的仓库/部署目录执行。已有真实实例使用独立目录、Compose project 名和端口，不向其挂载目录执行测试。
 
