@@ -112,11 +112,17 @@ internal static class HeadlessVerification
         await StableTick(server, 8, "Readiness loss left the tick gate open.");
         await host.SetTimeSpeedAsync(4);
         server.ReportSimulationProgress(epoch, 8, true);
-        await Until(() => server.Tick == 14);
-        await StableTick(server, 14, "A high-speed clock burst exceeded the six-tick resident lead.");
+        // The lead is a duration, not a constant: at 4x (rate 15) six ticks is 6.7 ms, shorter than a progress
+        // round trip, so the gate must open to the scaled lead instead of collapsing the budget to one or two
+        // ticks per loop. Both halves are asserted - it opens to that lead and it stops exactly there.
+        var fastLead = server.SimulationLeadTicksForDiagnostics;
+        Assert(fastLead > NetworkProtocol.SimulationLeadTicks,
+            $"A 4x room kept the vanilla-speed lead of {NetworkProtocol.SimulationLeadTicks} ticks.");
+        await Until(() => server.Tick >= 8 + fastLead);
+        await StableTick(server, 8 + fastLead, "A high-speed clock burst exceeded the scaled resident lead.");
         server.ReportSimulationProgress(epoch, 9, true);
-        await Until(() => server.Tick == 15);
-        await StableTick(server, 15, "High-speed clamping retained excess tick debt.");
+        await Until(() => server.Tick >= 9 + fastLead);
+        await StableTick(server, 9 + fastLead, "High-speed clamping retained excess tick debt.");
         await host.SetTimeSpeedAsync(0);
         var paused = server.Tick;
         server.ReportSimulationProgress(epoch, 500, true);

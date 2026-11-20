@@ -1,5 +1,10 @@
-﻿#Requires -Version 7.0
-param([string]$Dotnet = 'dotnet', [string]$RimWorldDir, [string]$Bash)
+#Requires -Version 7.0
+param([string]$Dotnet = 'dotnet', [string]$RimWorldDir, [string]$Bash,
+    # The installer verification feeds absolute MSYS paths to bash. A bash wrapper that rewrites those arguments
+    # into Windows form (the bundled `winuxcmd` shell does) turns every fixture directory into a relative one, so
+    # the fixtures fail for a reason that has nothing to do with the scripts. CI runs on Linux with a real bash
+    # and keeps the check; a local release run can skip it explicitly instead of silently passing.
+    [switch]$SkipInstallerTest)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $version = ([xml](Get-Content (Join-Path $repo 'Directory.Build.props') -Raw)).Project.PropertyGroup.Version
@@ -88,7 +93,12 @@ try {
     Run-Dotnet -Arguments @('run', '--project', 'Tests/TurboTick.Tests.csproj', '-c', 'Release')
     Run-Dotnet -Arguments @('run', '--project', 'Tests/Networking/TurboTick.Networking.Tests.csproj', '-c', 'Release')
     $testBash = Resolve-TestBash
-    & (Join-Path $PSScriptRoot 'steamcmd/test-install-server.ps1') -Bash $testBash
+    if ($SkipInstallerTest) {
+        Write-Warning 'Skipping steamcmd/test-install-server.ps1 (-SkipInstallerTest). CI still runs it.'
+    }
+    else {
+        & (Join-Path $PSScriptRoot 'steamcmd/test-install-server.ps1') -Bash $testBash
+    }
     foreach ($script in Get-ChildItem (Join-Path $repo 'deploy/container') -File -Filter '*.sh') {
         $path = $script.FullName.Replace('\', '/')
         if ($path -match '^([a-zA-Z]):/(.*)$') { $path = '/' + $Matches[1].ToLowerInvariant() + '/' + $Matches[2] }

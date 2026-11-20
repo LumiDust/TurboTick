@@ -2,7 +2,8 @@ name: turbotick-headless
 
 services:
   headless:
-    image: ghcr.io/lumidust/turbotick-headless:0.6.1
+    # Pin the release you validated, or point this at a locally built tag (`-t turbotick-headless:0.7.1`).
+    image: ${TURBOTICK_IMAGE:-ghcr.io/lumidust/turbotick-headless:0.7.1}
     platform: linux/amd64
     user: "${TURBOTICK_UID:-10001}:${TURBOTICK_GID:-10001}"
     command: ["run"]
@@ -44,7 +45,8 @@ services:
           create_host_path: false
 
   installer:
-    image: ghcr.io/lumidust/turbotick-headless:0.6.1
+    # Pin the release you validated, or point this at a locally built tag (`-t turbotick-headless:0.7.1`).
+    image: ${TURBOTICK_IMAGE:-ghcr.io/lumidust/turbotick-headless:0.7.1}
     platform: linux/amd64
     user: "${TURBOTICK_UID:-10001}:${TURBOTICK_GID:-10001}"
     profiles: ["setup"]

@@ -1,16 +1,22 @@
 # TurboTick headless 专服部署
 
-> **本文描述的是 0.6.0 的 headless 游戏托管部署，0.6.1 起不再是默认方式。**
->
-> 0.6.1 的专服是**协调器**：自包含单文件、不加载殖民地、**不需要安装 RimWorld**，
-> 每个玩家在本地完整模拟。部署方式见[仓库 README](../README.md#部署专服)与
-> `deploy/turbotick-coordinator.service`。
->
-> 本文保留的原因只有两个：回退到 ≤0.6.0 的 headless 版本时需要它；以及从旧 headless
-> 世界迁移到协调器时可以参考数据目录结构。文中「旧独立 .NET 网络服已退役」对应 0.6.0
-> 当时的决定，0.6.1 已改回该形态（但不再模拟殖民地）。
+## 0.7.1：镜像就是部署单位
 
-**0.6.0 权威同步 · RimWorld 1.7 · 网络协议 v4**。本文只使用通用占位值：`ACCOUNT` 为有权下载游戏的 Steam 账号，`SERVER_HOST` 为玩家可达地址，`BUILD` 为已核对的完整游戏 build，`PROXY_HOST:PROXY_PORT` 为可选代理。Linux 根目录示例为 `/srv/turbotick`，Windows 为 `C:\Servers\TurboTick`。
+0.7.1 的专服以 **`ghcr.io/lumidust/turbotick-headless:0.7.1`（linux/amd64）** 为发布单位，容器里跑的是
+加载真实 RimWorld 的权威副本：世界在一端推进，另一端的副本按状态通道逐项跟随。部署步骤、变量表、
+`installer` 阶段与文件清单见 **[deploy/container/README.md](container/README.md)**，本文余下部分保留
+≤0.6.0 的旧目录布局，只用于回退参考。
+
+要点（与旧版不同的部分）：
+
+- 镜像由发布流水线用**同一份客户端 Mod zip** 做 payload，不另行编译；`run` 启动前逐文件校验已安装的
+  TurboTick 与镜像内容，缺失/改动/多余都要求停服重装。
+- 宿主变量 `TURBOTICK_IMAGE` 可指向本地构建标签（`docker build -t turbotick-headless:0.7.1 .`），
+  仓库根 `docker-compose.yml` 默认已是 `0.7.1`。
+- 旧仓库内的 `docker/` 目录（0.6.0 预览时代的 Dockerfile/compose/入口）已从版本库移除，
+  现在只有根 `Dockerfile` + `deploy/container/` 一套入口。
+
+**≤0.6.0 旧布局 · RimWorld 1.7（回退参考）**。本文只使用通用占位值：`ACCOUNT` 为有权下载游戏的 Steam 账号，`SERVER_HOST` 为玩家可达地址，`BUILD` 为已核对的完整游戏 build，`PROXY_HOST:PROXY_PORT` 为可选代理。Linux 根目录示例为 `/srv/turbotick`，Windows 为 `C:\Servers\TurboTick`。
 
 本版作为容器预览发布：安装/运行隔离、入口与健康检查已验证，但新随机存档的双端长跑仍观察到锁步分叉，故障会挂起时间线。先用独立数据目录试运行，保留旧包和恢复数据，不把镜像健康状态当作长期模拟一致的证明。稳定版 latest 不随此预览更新。
 
