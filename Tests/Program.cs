@@ -43,7 +43,9 @@ void Check(bool value, string message) { if (!value) throw new Exception(message
 // read it; the research copy under `_lab/` is the one that gets edited, and is preferred when it exists.
 string? LedgerSource()
 {
-    var repoCopy = Path.Combine(PackageValidation.PackageRoot(), "docs", "ledger", "triage_ledger.py");
+    // `docs/` is a locally-ignored research tree in this repository, so the ledger cannot live there: a path that
+    // only exists on the author's machine turns these pins into silent skips on CI. `scripts/ledger/` is tracked.
+    var repoCopy = Path.Combine(PackageValidation.PackageRoot(), "scripts", "ledger", "triage_ledger.py");
     if (File.Exists(repoCopy)) return File.ReadAllText(repoCopy);
     var labCopy = Path.Combine(PackageValidation.PackageRoot(), "..", "_lab", "triage_ledger.py");
     return File.Exists(labCopy) ? File.ReadAllText(labCopy) : null;
@@ -5236,6 +5238,8 @@ async Task SettlementRuleTests()
         // snapshot is worse than a stale one, because it silently converts somebody else's coverage into ours.
         {
             var triage = LedgerSource();
+            // A missing ledger used to make this block skip, so a repository that lost the file stayed green.
+            Check(triage is not null, "the ledger script is missing from the repository, so its pins did not run");
             if (triage is not null)
             {
             // **Pin the branch, not the token.** The first version of this assertion only looked for the string
@@ -5743,6 +5747,7 @@ async Task SettlementRuleTests()
         // Pinned against the ledger source rather than against the script: a script re-run with different arguments can
         // quietly disagree, while this string is the ledger's own claim about the game.
         var ledgerSource = LedgerSource();
+        Check(ledgerSource is not null, "the ledger script is missing from the repository, so its pins did not run");
         if (ledgerSource is null) return Task.CompletedTask;
         foreach (var entry in new[] { "CompTargetEffect_Resurrect", "CompPsylinkable", "CompAbilityEffect_Farskip",
                      "CompAnalyzable", "CompUsable" })
