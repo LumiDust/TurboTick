@@ -7187,6 +7187,32 @@ async Task WorldObjectChannelTests()
         Check(distinct is { Count: 2 }, "two world objects collapsed into one entry");
         return Task.CompletedTask;
     });
+
+    await Test("a stripped fragment is a change key, never a payload", () =>
+    {
+        // The defect this locks out: 0.7.3 stripped `def`/`tile`/`ID`/`tickDelta`/`faction`/`questTags` from the fragment
+        // it *sent*, not only from the one it compared. `Scribe_Defs.Look` is `value = ScribeExtractor.DefFromNode
+        // (curXmlParent[label])` and `DefFromNode` returns null for a missing node, so the first apply wrote null into a
+        // live settlement's `def`. Vanilla then dereferences it without a check - `Map.MapEdgeMaterial`
+        // (`parent.def.MapEdgeMaterial`) and `Map.IsPlayerHome` (`info.parent.def.canBePlayerHome`) - and the client threw
+        // NRE in the draw path every frame while the channel kept failing on the poisoned object.
+        var fragment = "<li Class=\"Settlement\"><def>Settlement</def><tile>160265,0</tile><ID>253</ID>"
+            + "<faction>Faction_22</faction><questTags IsNull=\"True\" /><tickDelta>7</tickDelta>"
+            + "<nameInt>殖民地</nameInt><ticksLeftToForceExitAndRemoveMap>7200</ticksLeftToForceExitAndRemoveMap></li>";
+        var stripped = TurboTick.Networking.FragmentText.Strip(fragment,
+            ["def", "tile", "ID", "tickDelta", "faction", "questTags"]);
+        foreach (var gone in new[] { "<def>", "<tile>", "<ID>", "<tickDelta>", "<faction>", "<questTags" })
+            Check(!stripped.Contains(gone, StringComparison.Ordinal), $"the change key still carries {gone}");
+        Check(stripped.Contains("<nameInt>殖民地</nameInt>", StringComparison.Ordinal),
+            "the change key dropped a field no other channel carries");
+        Check(stripped.Contains("ticksLeftToForceExitAndRemoveMap", StringComparison.Ordinal),
+            "the change key dropped a comp field");
+        // The half that was wrong: the payload has to keep what the key throws away.
+        foreach (var kept in new[] { "<def>Settlement</def>", "<tile>160265,0</tile>", "<ID>253</ID>", "<faction>Faction_22</faction>" })
+            Check(fragment.Contains(kept, StringComparison.Ordinal), $"the payload lost {kept}");
+        Check(stripped.Length < fragment.Length, "stripping removed nothing at all");
+        return Task.CompletedTask;
+    });
 }
 
 async Task QuestChannelTests()

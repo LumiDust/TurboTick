@@ -108,8 +108,17 @@ internal static class WorldObjectStateSync
                 seen.Add(each.ID);
                 var body = Fragment(each);
                 if (body is null) continue;
-                if (lastState.TryGetValue(each.ID, out var before) && before == body) continue;
-                lastState[each.ID] = body;
+                // The key is the stripped fragment; the payload is the whole one. Sending the stripped fragment was a
+                // data-loss bug, not a size optimisation: `Scribe_Defs.Look` is
+                // `value = ScribeExtractor.DefFromNode(curXmlParent[label])` (`:114528`) and `DefFromNode` returns
+                // **null** for a missing node (`:114517`), so the first apply set the settlement's `def` to null. Two
+                // vanilla getters dereference it without a check - `Map.MapEdgeMaterial` (`:76530`, `parent.def
+                // .MapEdgeMaterial`) and `Map.IsPlayerHome` (`:76546`, `info.parent.def.canBePlayerHome`) - and every
+                // frame after that threw NRE in the draw path on the client while the world object channel kept
+                // failing on the poisoned object.
+                var key = ChangeKey(body);
+                if (lastState.TryGetValue(each.ID, out var before) && before == key) continue;
+                lastState[each.ID] = key;
                 LastSample = body.Replace("\r", " ").Replace("\n", " ");
                 StatesSent++;
                 foreach (var marker in CompMarkers)
@@ -148,30 +157,16 @@ internal static class WorldObjectStateSync
         var xml = ScribeBridge.Save(worldObject);
         if (xml is not { Length: > 0 }) { LastDiagnostic = "保存返回空"; return null; }
         FragmentsBuilt++;
-        foreach (var tag in Stripped)
-            xml = StripElement(xml, tag);
-        if (xml.Length == 0) { EmptyAfterStrip++; return null; }
+        if (ChangeKey(xml).Length == 0) { EmptyAfterStrip++; return null; }
         return xml;
     }
 
-    /// <summary>Removes the first <c>&lt;tag&gt;…&lt;/tag&gt;</c> (self-closing or not) from a fragment.
+    /// <summary>The change key: the fragment with the elements other channels already carry removed.
     ///
-    /// <para>Written against the text because the fields live in private members the game only writes through
-    /// <c>ExposeData</c>; building a filtered copy of the object would mean writing to the running colony.</para></summary>
-    private static string StripElement(string xml, string tag)
-    {
-        var open = xml.IndexOf("<" + tag, StringComparison.Ordinal);
-        if (open < 0) return xml;
-        // The opening tag may carry attributes (`<def>`, `<tile>`, `<questTags IsNull="True" />`), so the end of the tag is
-        // located rather than assuming a bare form.
-        var tagEnd = xml.IndexOf('>', open);
-        if (tagEnd < 0) return xml;
-        // Self-closing: nothing between the brackets to remove.
-        if (xml[tagEnd - 1] == '/') return xml.Remove(open, tagEnd - open + 1);
-        var close = xml.IndexOf("</" + tag + ">", tagEnd, StringComparison.Ordinal);
-        if (close < 0) return xml;
-        return xml.Remove(open, close + tag.Length + 3 - open);
-    }
+    /// <para>This is a comparison key only. It must never be loaded: the same removal that makes two frames compare equal
+    /// makes the fragment lossy, because `Scribe_Defs.Look` and `Scribe_References.Look` write <c>null</c> when their node
+    /// is absent rather than leaving the field alone. See <see cref="Publish"/> for the measured consequence.</para></summary>
+    internal static string ChangeKey(string xml) => FragmentText.Strip(xml, Stripped);
 
     /// <summary>Applies one fragment. Loads through <see cref="ScribeBridge.Load"/>, which is the same path the quest and
     /// hediff channels use, so identity (def, id, map, position) is preserved by the bridge rather than by this method.
@@ -191,11 +186,34 @@ internal static class WorldObjectStateSync
                 // The def name is the only guard against id reuse across a save that grew between peers - the same reason
                 // `WorldObjectSync.Apply` checks it before moving anything.
                 if (state.Def is { Length: > 0 } expected && each.def?.defName != expected) return;
+                // Repair first. 0.7.3 sent the stripped fragment, so a client that ran it has objects whose `def` is
+                // already null; loading another fragment onto one of those throws inside `ExposeData` (`def.comps`) and
+                // never recovers. The def name travels on every row, so the field can be rebuilt without a reload.
+                if (each.def is null)
+                {
+                    var repaired = state.Def is { Length: > 0 } name
+                        ? DefDatabase<WorldObjectDef>.GetNamedSilentFail(name)
+                        : null;
+                    if (repaired is null)
+                    {
+                        ApplyFailures++;
+                        if (ApplyFailures <= 6)
+                            Log.Warning($"[TurboTick] 世界物件状态无法应用：{state.Id} 的 def 为空且名字「{state.Def}」在本端不存在");
+                        return;
+                    }
+                    each.def = repaired;
+                }
+                var defBefore = each.def;
                 if (!ScribeBridge.Load(each, state.Body))
                 {
                     ApplyFailures++;
+                    if (each.def is null && defBefore is not null) each.def = defBefore;
                     return;
                 }
+                // The payload carries `def`, so this can only fire on a fragment from a peer that still strips it or
+                // on a def this build does not have. Restoring is what keeps one bad fragment from poisoning a live
+                // object for the rest of the session.
+                if (each.def is null && defBefore is not null) each.def = defBefore;
                 StatesApplied++;
                 return;
             }

@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Xml;
 using HarmonyLib;
+using RimWorld.Planet;
 using Verse;
 
 namespace TurboTick;
@@ -117,6 +118,11 @@ internal static class ScribeBridge
         // after the load instead of rewritten beforehand: serialising the receiver on every load doubled
         // the Scribe work per object per frame and showed up as multi-second frame hitches.
         var thing = value as Thing;
+        // Same identity-preservation argument as `thing` above, for the world-object channel: `def` is read by vanilla
+        // getters that do not null-check it (`Map.MapEdgeMaterial`, `Map.IsPlayerHome`), and a fragment that names the
+        // def is not guaranteed on every path. Captured before the load, restored after it if the load cleared it.
+        var worldObject = value as WorldObject;
+        var worldDefBefore = worldObject?.def;
         // Cheap field reads only: no serialisation on this path.
         var mapBefore = thing?.Map;
         var positionBefore = thing?.Position ?? IntVec3.Invalid;
@@ -182,7 +188,8 @@ internal static class ScribeBridge
         }
         catch (Exception error)
         {
-            Log.Warning("[TurboTick] Scribe load failed: " + error.GetType().Name + ": " + error.Message);
+            Log.Warning("[TurboTick] Scribe load failed: " + error.GetType().Name + ": " + error.Message
+                + (StackSample(error) is { Length: > 0 } stack ? "\n" + stack : string.Empty));
             return false;
         }
         finally
@@ -201,6 +208,8 @@ internal static class ScribeBridge
                 if (wasSpawned) RestoreSpawn(thing, mapBefore, positionBefore, rotationBefore);
                 CheckSingleRegistration(thing);
             }
+            if (worldObject is not null && worldDefBefore is not null && worldObject.def is null)
+                worldObject.def = worldDefBefore;
         }
     }
 
@@ -301,8 +310,7 @@ internal static class ScribeBridge
 
     /// <summary>Runs an optional post-load hook by reflection: 1.7 exposes several unrelated PostLoad
     /// members without a shared interface, and a mod's Comp may have one.</summary>
-    private static void PostLoad(IExposable value)
-    {
+    private static void PostLoad(IExposable value)    {
         for (var type = value.GetType(); type is not null && type != typeof(object); type = type.BaseType)
         {
             var method = type.GetMethod("PostLoad", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
@@ -312,6 +320,22 @@ internal static class ScribeBridge
             catch (Exception error) { Log.Warning("[TurboTick] PostLoad: " + error.GetType().Name); }
             return;
         }
+    }
+
+    /// <summary>The first frames of a caught exception, for the log line.
+    ///
+    /// <para>RimWorld logs the stack of the **caller** of <c>Log.Warning</c>, not of the exception it was handed, so the
+    /// 0.7.3 line "Scribe load failed: NullReferenceException" recorded where the failure was caught and not where it
+    /// happened - one diagnosis round lost to a stack nobody could see. Bounded to eight lines and 1 200 characters so a
+    /// channel that fails every frame cannot turn the log into the payload.</para></summary>
+    private static string? StackSample(Exception error)
+    {
+        var stack = error.StackTrace;
+        if (string.IsNullOrEmpty(stack)) return null;
+        var lines = stack.Split('\n');
+        var count = lines.Length < 8 ? lines.Length : 8;
+        var text = string.Join("\n", lines, 0, count).TrimEnd();
+        return text.Length <= 1200 ? text : text.Substring(0, 1200) + " …";
     }
 }
 
