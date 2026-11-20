@@ -60,6 +60,13 @@
 
    实测耗时：镜像 173 MB 经代理约 6 分钟；`update-check` 一次查询约 40 秒。
 
+## 大文件：镜像层不要走这个小代理
+
+`tinyproxy` 转发 139 MB 的镜像层会反复 `short read: expected … bytes but got …: unexpected EOF`（实测 4/4 全部失败）；
+中继机直连 GitHub 的 blob CDN（`185.199.110.154:443`）也会被 `connection reset`。**Steam 查询是小请求，没问题**；
+拉镜像要么换一个能吃大响应体的代理（本部署临时用工作站上的 Clash，6 分钟拉完 0.7.2），要么在有出口的机器上
+`docker save | gzip` 后在专服 `docker load`。判断标准不是“能不能解析”，而是“139 MB 那一层能不能下完”。
+
 ## 已知限制
 
 - 中继机必须在线；它不在线时 `update-check` 会把 `status` 写成 `unavailable` 并保留上一次数据（不会被伪造成新鲜值），
