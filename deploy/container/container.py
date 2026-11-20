@@ -209,6 +209,98 @@ def health(path):
     print(f"[health] healthy state={status['state']} age={age:.1f}s")
 
 
+def build_id(text):
+    """Steam records the build id in two places: the app_info KV dump and the installed appmanifest."""
+    match = re.search(r'"buildid"\s+"(\d+)"', text)
+    return int(match.group(1)) if match else None
+
+
+def installed_build(game):
+    """Only a Steam-installed tree carries an appmanifest; a copied tree does not, and saying so is
+    more useful than guessing a build id from `Version.txt` (5011 is the game's own revision, not Steam's)."""
+    manifest = game / "steamapps" / "appmanifest_294100.acf"
+    if not manifest.is_file():
+        return None
+    try:
+        return build_id(manifest.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return None
+
+
+def update_status(game, transcript, state):
+    version = game_layout(game)
+    latest = build_id(transcript.read_text(encoding="utf-8", errors="replace"))
+    if latest is None:
+        fail("the SteamCMD transcript contains no build id; the update check is inconclusive")
+    current = installed_build(game)
+    record = state / "game-update.json"
+    previous = {}
+    if record.is_file():
+        try:
+            loaded = json.loads(record.read_text(encoding="utf-8"))
+            previous = loaded if isinstance(loaded, dict) else {}
+        except (OSError, ValueError):
+            previous = {}
+    previous_latest = previous.get("latestBuildId")
+    if not isinstance(previous_latest, int):
+        previous_latest = None
+    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = {
+        "utc": now,
+        "checkedAt": now,
+        "status": "ok",
+        "reason": None,
+        "installedVersion": version,
+        "installedBuildId": current,
+        "latestBuildId": latest,
+        "needsUpdate": None if current is None else latest != current,
+        "newBuildSinceLastCheck": previous_latest is not None and previous_latest != latest,
+        "previousLatestBuildId": previous_latest,
+        "previousCheckedAt": previous.get("utc"),
+        "source": "steamcmd app_info_print 294100",
+    }
+    state.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if current is None:
+        print(f"[update] RimWorld {version}: installed build id unknown (no steamapps manifest); latest Steam build {latest}")
+    else:
+        print(f"[update] RimWorld {version}: installed build {current}, latest Steam build {latest}, needsUpdate={payload['needsUpdate']}")
+    if payload["newBuildSinceLastCheck"]:
+        print(f"[update] Steam published a new build ({previous_latest} -> {latest}); run install --user ACCOUNT to update")
+
+
+def update_failure(state, reason, game=None):
+    """A check that could not reach Steam must still leave a witness: a stale file that looks fresh is how
+    an out-of-date server goes unnoticed."""
+    record = state / "game-update.json"
+    previous = {}
+    if record.is_file():
+        try:
+            loaded = json.loads(record.read_text(encoding="utf-8"))
+            previous = loaded if isinstance(loaded, dict) else {}
+        except (OSError, ValueError):
+            previous = {}
+    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = dict(previous)
+    payload.update({
+        "utc": now,
+        "checkedAt": now,
+        "status": "unavailable",
+        "reason": reason,
+        "source": "steamcmd app_info_print 294100",
+    })
+    payload.setdefault("latestBuildId", None)
+    if game is not None and not payload.get("installedVersion"):
+        try:
+            payload["installedVersion"] = (game / "Version.txt").read_text(encoding="utf-8-sig").splitlines()[0].strip().split()[0]
+        except (OSError, IndexError):
+            payload["installedVersion"] = None
+    payload.setdefault("installedVersion", None)
+    state.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"[update] check unavailable: {reason}")
+
+
 def main():
     command, *args = sys.argv[1:]
     paths = [Path(a) for a in args]
@@ -248,6 +340,12 @@ def main():
         validate_harmony(target)
     elif command == "health":
         health(paths[0])
+    elif command == "update-status":
+        game, transcript, state = paths
+        update_status(game, transcript, state)
+    elif command == "update-failed":
+        state, reason = paths[0], args[1]
+        update_failure(state, reason, paths[2] if len(paths) > 2 else None)
     else:
         fail(f"unknown container helper command: {command}")
 

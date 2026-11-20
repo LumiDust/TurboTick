@@ -90,3 +90,45 @@ services:
         target: /steam
         bind:
           create_host_path: false
+
+  # Steam publishes a new RimWorld build without telling anyone. This sidecar asks app 294100 for its
+  # current build id on a timer and writes /state/game-update.json, so "is the server out of date?" is a
+  # file you can read instead of a memory you have to keep. It never takes the deployment lock and never
+  # touches the game directory.
+  update-check:
+    image: ${TURBOTICK_IMAGE:-ghcr.io/lumidust/turbotick-headless:0.7.1}
+    platform: linux/amd64
+    user: "${TURBOTICK_UID:-10001}:${TURBOTICK_GID:-10001}"
+    profiles: ["watch"]
+    command: ["watch-updates", "${TURBOTICK_UPDATE_CHECK_SECONDS:-3600}"]
+    init: true
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    read_only: true
+    # mktemp writes the SteamCMD transcript: a read-only /tmp fails the check before it starts.
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=128m,mode=1777
+    healthcheck:
+      disable: true
+    environment:
+      TURBOTICK_UPDATE_CHECK_SECONDS: "${TURBOTICK_UPDATE_CHECK_SECONDS:-3600}"
+      HTTP_PROXY: "${INSTALL_HTTP_PROXY:-}"
+      HTTPS_PROXY: "${INSTALL_HTTPS_PROXY:-}"
+      ALL_PROXY: "${INSTALL_ALL_PROXY:-}"
+    volumes:
+      - type: bind
+        source: ${TURBOTICK_GAME_DIR:-./data/game}
+        target: /game
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TURBOTICK_STATE_DIR:-./data/state}
+        target: /state
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TURBOTICK_STEAM_CACHE_DIR:-./data/steam-cache}
+        target: /steam
+        bind:
+          create_host_path: false

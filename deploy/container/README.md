@@ -1,4 +1,4 @@
-# TurboTick 0.6.0 headless 容器部署
+# TurboTick headless 容器部署（0.7.1）
 
 本版是容器预览：入口与部署流程验证通过，随机存档长期锁步仍可能分叉，先在独立数据目录验证并保留旧包。稳定版 latest 不随预览更新。
 
@@ -34,6 +34,39 @@ docker compose pull headless installer
 | `TURBOTICK_PUBLISHED_PORT` | `30572` | 宿主 TCP 端口；容器固定 30572 |
 
 `headless` 不挂载 `/steam`，不传 Steam 账号环境，不在启动时下载或更新。它有 `init: true`、只读根文件系统和独立可写且允许原生库映射的 `/tmp`（tmpfs 必须显式 `exec`，Harmony/MonoMod 会从临时目录加载原生辅助库），通过 `/profile` 与 `/state` 持久化。`installer` 仅通过 `setup` profile 显式运行，使用相同镜像、可交互 stdin/tty，不发布端口。
+
+## 1.5 游戏本体不在镜像里，且会被自动检测更新
+
+镜像只带三样东西：发布流水线产出的 TurboTick payload、部署脚本、以及一份 SteamCMD bootstrap。
+**RimWorld 本体、DLC、Harmony、存档、账号材料一律在宿主卷里**（`/game`、`/profile`、`/state`、`/steam`），
+镜像内 `/game` 是空目录；`docker run --entrypoint bash <image> -c 'ls -A /game'` 应当没有任何输出。
+
+Steam 发布新 build 时不会通知任何人，所以更新检测是一个显式服务：
+
+```bash
+# 一次性检查（写入 /state/game-update.json）
+docker compose run --rm update-check check-update
+
+# 常驻：每小时问一次（默认 3600 秒，可用 TURBOTICK_UPDATE_CHECK_SECONDS 改）
+docker compose --profile watch up -d update-check
+```
+
+`/state/game-update.json` 的形状：
+
+| 字段 | 含义 |
+|---|---|
+| `status` | `ok` 或 `unavailable`（后者表示这次没能问到 Steam） |
+| `installedVersion` | `/game/Version.txt` 的第一行（例如 `1.7.5011`） |
+| `installedBuildId` | `/game/steamapps/appmanifest_294100.acf` 里的 build id；复制来的游戏树没有这个文件，因此为 `null` |
+| `latestBuildId` | SteamCMD `app_info_print 294100` 报出的 build id |
+| `needsUpdate` | 已知两端 build id 时为布尔值；`installedBuildId` 未知时为 `null`（不猜） |
+| `newBuildSinceLastCheck` | 与上一次检查相比是否出现了新的 build |
+| `reason` | 只在 `unavailable` 时出现 |
+
+检测失败不会清掉上一次的快照：失败时保留 `latestBuildId` 并写 `status: unavailable`，避免「文件看起来是新的，
+其实是旧的」；`TURBOTICK_UPDATE_TIMEOUT_SECONDS`（默认 120）给 SteamCMD 设上限，否则没有出路的机器会卡在 TCP 重试里，
+连状态文件都留不下。检测走 SteamCMD，需要容器能访问 Steam；在无法直连 Steam 的机器上把代理传给该服务
+（`INSTALL_HTTPS_PROXY` / `INSTALL_ALL_PROXY`，与 install 阶段同一组变量）。
 
 ## 2. 显式 install：原生 SteamCMD 登录与安装
 

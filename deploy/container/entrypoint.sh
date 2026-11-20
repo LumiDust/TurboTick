@@ -7,10 +7,12 @@ helper() { python3 "$ROOT/container.py" "$@"; }
 value() { [[ $# -ge 2 && -n "$2" ]] || die "option $1 requires a value"; }
 usage() {
   cat <<'EOF'
-Usage: entrypoint.sh [run [GAME_ARG ...] | install [OPTIONS]]
+Usage: entrypoint.sh [run [GAME_ARG ...] | install [OPTIONS] | check-update | watch-updates [SECONDS]]
   run                       Offline preflight, then exec /game/RimWorld.
   install --user ACCOUNT    Install/update game with native SteamCMD interaction.
   install --skip-download   Use existing game + Harmony; never access /steam.
+  check-update              Ask Steam for app 294100's build id; write /state/game-update.json.
+  watch-updates [SECONDS]   check-update in a loop (default TURBOTICK_UPDATE_CHECK_SECONDS or 3600).
 Install options:
   --user ACCOUNT           Or STEAM_USER; otherwise read account on stdin.
   --branch NAME            Or TURBOTICK_GAME_BRANCH (default unstable).
@@ -23,8 +25,67 @@ EOF
 }
 mode="${1:-run}"
 [[ $# -eq 0 ]] || shift
-case "$mode" in --help|-h|help) usage; exit 0 ;; run|install) ;; *) die "unknown stage '$mode'; use install or run" ;; esac
+case "$mode" in --help|-h|help) usage; exit 0 ;; run|install|check-update|watch-updates) ;; *) die "unknown stage '$mode'; use install, run, check-update or watch-updates" ;; esac
 export HOME="$PROFILE_DIR" XDG_CONFIG_HOME="$PROFILE_DIR/.config" TURBOTICK_DATA="$STATE"
+
+# SteamCMD bootstrap: the image carries an immutable seed, the /steam volume carries the copy that may
+# self-update. install and check-update both need it, and neither may touch the deployment lock.
+prepare_steamcmd() {
+  mkdir -p /steam/home /steam/home/.config /steam/steamcmd
+  if [[ ! -f /steam/steamcmd/steamcmd.sh ]]; then
+    cp -a /opt/steamcmd-seed/. /steam/steamcmd/
+    chmod -R u+w /steam/steamcmd
+    chmod u+x /steam/steamcmd/steamcmd.sh /steam/steamcmd/linux32/steamcmd
+  fi
+}
+
+# Runs without the deployment lock: a running server must still be able to learn that Steam has a new build.
+check_update() {
+  mkdir -p "$STATE"
+  prepare_steamcmd
+  local transcript code=0
+  transcript="$(mktemp)"
+  # Bounded on purpose: with no route to Steam the client sits in TCP retries for minutes, and a check that
+  # never returns leaves no status file at all - which reads exactly like "nothing to report".
+  timeout "${TURBOTICK_UPDATE_TIMEOUT_SECONDS:-120}" \
+    env HOME=/steam/home XDG_CONFIG_HOME=/steam/home/.config "$ROOT/steamcmd.sh" \
+      +login anonymous +app_info_update 1 +app_info_print 294100 +quit >"$transcript" 2>&1 || code=$?
+  if [[ "$code" -eq 124 ]]; then
+    rm -f -- "$transcript"
+    helper update-failed "$STATE" "SteamCMD did not answer within ${TURBOTICK_UPDATE_TIMEOUT_SECONDS:-120}s" "$GAME"
+    log 'SteamCMD timed out; recorded as unavailable in /state/game-update.json'
+    return 1
+  fi
+  if [[ "$code" -ne 0 ]]; then
+    rm -f -- "$transcript"
+    helper update-failed "$STATE" "SteamCMD app_info_print exited $code" "$GAME"
+    log 'SteamCMD app_info_print failed; recorded as unavailable in /state/game-update.json'
+    return 1
+  fi
+  if grep -Eiq 'ERROR!|Login Failure|Invalid Password|Account Logon Denied|Failed to load' "$transcript"; then
+    rm -f -- "$transcript"
+    helper update-failed "$STATE" 'SteamCMD reported an error while reading app 294100' "$GAME"
+    log 'SteamCMD reported an error while reading app 294100; recorded as unavailable'
+    return 1
+  fi
+  helper update-status "$GAME" "$transcript" "$STATE"
+  rm -f -- "$transcript"
+}
+
+if [[ "$mode" == check-update ]]; then
+  check_update
+  exit 0
+fi
+if [[ "$mode" == watch-updates ]]; then
+  interval="${1:-${TURBOTICK_UPDATE_CHECK_SECONDS:-3600}}"
+  [[ "$interval" =~ ^[0-9]+$ ]] && (( interval >= 60 )) || die 'watch-updates interval must be a whole number of seconds, at least 60'
+  log "watching Steam app 294100 for new builds every ${interval}s; status is /state/game-update.json"
+  while :; do
+    check_update || log 'update check failed; the previous /state/game-update.json is kept'
+    sleep "$interval"
+  done
+fi
+
 helper writable "$PROFILE_DIR" "$STATE"
 # FD 9 survives exec, so the actual game owns this lock for its entire lifetime.
 # flock --close or a background supervisor would release it too early.

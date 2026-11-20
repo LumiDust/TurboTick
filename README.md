@@ -45,6 +45,8 @@ docker compose up -d headless                               # 之后只起 run
 ```
 
 `/game` 放 RimWorld 本体与 `Mods/Harmony`，`/profile` 放配置与存档，`/state` 放运行状态；
+镜像里**不含游戏本体**（`/game` 在镜像内是空目录），游戏更新检测由 `update-check` 服务负责——
+`docker compose --profile watch up -d update-check` 会每小时写 `/state/game-update.json`（见部署文档）；
 镜像会在启动前逐文件校验 `Mods/TurboTick` 与镜像内容是否一致。也可以
 `docker build -t turbotick-headless:0.7.1 .` 本地构建后把 `TURBOTICK_IMAGE` 指向该标签。
 完整变量表、目录权限与文件清单见 [`deploy/container/README.md`](deploy/container/README.md)。

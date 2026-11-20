@@ -14,6 +14,7 @@ cleanup() {
 }
 trap cleanup EXIT
 for volume in "${volumes[@]}"; do docker volume create "$volume" >/dev/null; done
+
 rw=(-v "${volumes[0]}:/game" -v "${volumes[1]}:/profile" -v "${volumes[2]}:/state")
 ro=(-v "${volumes[0]}:/game:ro" -v "${volumes[1]}:/profile" -v "${volumes[2]}:/state")
 base=(--network none --read-only --tmpfs /tmp:rw,exec,nosuid,nodev,size=64m,mode=1777)
@@ -28,6 +29,11 @@ expect_exit() {
   [[ "$actual" -eq "$expected" ]] || { printf 'FAIL: expected exit %s, got %s\n' "$expected" "$actual" >&2; exit 1; }
 }
 pass() { printf 'PASS %s\n' "$*"; }
+
+# The image is the server software, not the game: whoever mounts /game must be the only source of RimWorld
+# bytes, and shipping them in the image would also carry them under the wrong licence.
+docker run --rm --network none --entrypoint bash "$image" -c 'test -z "$(ls -A /game)" && ! ls /opt/turbotick | grep -qiE "^RimWorld|^Data$"'
+pass 'image carries no game payload; /game stays empty until the operator installs one'
 
 # Harmony/MonoMod loads a generated native helper from the temp directory.
 # Docker tmpfs defaults to noexec even when it is writable; cover actual dlopen.
@@ -172,6 +178,55 @@ MUTATE
 pass 'password environment rejected; SteamCMD exit code 42 propagated'
 
 # One direct-exec game owns the deployment lock until exit, and receives SIGTERM.
+# Steam tells nobody when it publishes a new RimWorld build. The status file has to say what was checked,
+# when, and which build is current - and a check that could not reach Steam must not look like a fresh one.
+admin <<'FIXTURE'
+set -euo pipefail
+mkdir -p /state
+printf '"buildid"\t\t"22344282"\n' > /state/transcript.txt
+FIXTURE
+docker run --rm "${base[@]}" "${ro[@]}" --entrypoint python3 "$image" /opt/turbotick/container.py update-status /game /state/transcript.txt /state >/dev/null
+admin <<'CHECK'
+set -euo pipefail
+python3 - <<'INNER'
+import json
+status = json.load(open('/state/game-update.json'))
+assert status['status'] == 'ok', status
+assert status['latestBuildId'] == 22344282, status
+assert status['installedVersion'], status
+assert 'needsUpdate' in status, status
+INNER
+printf '"buildid"\t\t"22400001"\n' > /state/transcript.txt
+CHECK
+docker run --rm "${base[@]}" "${ro[@]}" --entrypoint python3 "$image" /opt/turbotick/container.py update-status /game /state/transcript.txt /state >/dev/null
+admin <<'CHECK'
+set -euo pipefail
+python3 - <<'INNER'
+import json
+status = json.load(open('/state/game-update.json'))
+assert status['latestBuildId'] == 22400001, status
+assert status['newBuildSinceLastCheck'] is True, status
+assert status['previousLatestBuildId'] == 22344282, status
+INNER
+CHECK
+docker run --rm "${base[@]}" "${ro[@]}" --entrypoint python3 "$image" /opt/turbotick/container.py update-failed /state 'SteamCMD could not reach Steam' >/dev/null
+admin <<'CHECK'
+set -euo pipefail
+python3 - <<'INNER'
+import json
+status = json.load(open('/state/game-update.json'))
+assert status['status'] == 'unavailable', status
+assert status['reason'], status
+assert status['latestBuildId'] == 22400001, status
+INNER
+printf '"buildid"\t\t"22400002"\n' > /state/transcript.txt
+CHECK
+docker run --rm "${base[@]}" "${ro[@]}" --entrypoint python3 "$image" /opt/turbotick/container.py update-status /game /state/transcript.txt /state >/dev/null
+admin <<'CHECK'
+python3 -c "import json;d=json.load(open('/state/game-update.json'));assert d['status']=='ok' and d['reason'] is None, d"
+CHECK
+pass 'update status records the checked build, notices a new one, and a failed check keeps the old data'
+
 docker run -d --name "$running" --init --stop-timeout 90 "${base[@]}" "${ro[@]}" "$image" run >/dev/null
 ready=0
 for ((attempt=0; attempt<50; attempt++)); do
