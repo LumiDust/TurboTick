@@ -47,7 +47,9 @@ function Create-Package([string]$Directory, [string]$Path, [bool]$IncludeBase = 
     # SHA256SUMS file. Entries are written in ordinal path order with a fixed timestamp instead.
     $fixedTime = [DateTimeOffset]::new(2000, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
     $root = (Resolve-Path -LiteralPath $Directory).Path.TrimEnd('\', '/')
-    $files = Get-ChildItem -LiteralPath $root -Recurse -File |
+    # `-Force` is load-bearing: on Linux a dot-prefixed file is Hidden and plain `Get-ChildItem` skips it, so
+    # `.env.example` reached the zip on Windows and silently vanished on the runner.
+    $files = Get-ChildItem -LiteralPath $root -Recurse -File -Force |
         ForEach-Object { $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/') } |
         Sort-Object -Property @{ Expression = { $_ } } -CaseSensitive
     $stream = [IO.File]::Open($Path, [IO.FileMode]::Create, [IO.FileAccess]::Write)
