@@ -60,3 +60,6 @@ progress*.md
 docker/
 **/__pycache__/
 *.pyc
+
+# Windows console device name leaking into the worktree
+CON
