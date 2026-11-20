@@ -208,6 +208,8 @@ Diff that file against the host's copy to name the exact mod and file. Common ca
   <TurboTick_ModCheck_ContentHint>Both sides have this mod with the same version and the same position, but the files themselves differ: a hand-patched dll, a half-downloaded workshop item, or a beta build. Delete the local copy and resubscribe (or copy the room's copy over).</TurboTick_ModCheck_ContentHint>
   <TurboTick_ModCheck_RoomIsOlder>The room's copy is older: room {0}, local {1}. The server holds the stale build and needs updating.</TurboTick_ModCheck_RoomIsOlder>
   <TurboTick_ModCheck_LocalIsOlder>The local copy is older: room {0}, local {1}. This machine needs the update, usually because the workshop item was updated but never re-downloaded.</TurboTick_ModCheck_LocalIsOlder>
+  <TurboTick_ModCheck_RoomVersionOlder>The room's &lt;modVersion&gt; is the older one. The server has to update this mod before a client on the newer build can join.</TurboTick_ModCheck_RoomVersionOlder>
+  <TurboTick_ModCheck_LocalVersionOlder>This machine's &lt;modVersion&gt; is the older one. Update the mod here - if the game also has a workshop copy, the local folder is what it loaded.</TurboTick_ModCheck_LocalVersionOlder>
   <TurboTick_ModCheck_UpdatedSinceLaunch>{0} mods were updated since the last launch: {1}. If the room worked minutes ago and refuses now, this is usually why.</TurboTick_ModCheck_UpdatedSinceLaunch>
   <TurboTick_ModCheck_RoomOlderMark>room older {0}</TurboTick_ModCheck_RoomOlderMark>
   <TurboTick_ModCheck_LocalOlderMark>local older {0}</TurboTick_ModCheck_LocalOlderMark>

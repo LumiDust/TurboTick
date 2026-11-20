@@ -207,6 +207,8 @@
   <TurboTick_ModCheck_ContentHint>两边都有这个模组，版本和顺序也一样，但里面的文件内容不同：手工改过的 dll、只下载了一半的工坊条目、或是 beta 分支的构建。删掉本机这一份重新订阅（或把房间那份复制过来）即可。</TurboTick_ModCheck_ContentHint>
   <TurboTick_ModCheck_RoomIsOlder>房间那份更旧：房间 {0}，本机 {1}。房间里装的是旧版，需要服务端更新。</TurboTick_ModCheck_RoomIsOlder>
   <TurboTick_ModCheck_LocalIsOlder>本机这份更旧：房间 {0}，本机 {1}。本机需要更新，通常是因为工坊更新后没有重新下载。</TurboTick_ModCheck_LocalIsOlder>
+  <TurboTick_ModCheck_RoomVersionOlder>版本偏低的是房间那份：服务端要先把这个模组更新，装新版本的客户端才进得来。</TurboTick_ModCheck_RoomVersionOlder>
+  <TurboTick_ModCheck_LocalVersionOlder>版本偏低的是本机这份：更新本机的模组；如果同时有工坊副本，游戏加载的是本地文件夹那一份。</TurboTick_ModCheck_LocalVersionOlder>
   <TurboTick_ModCheck_UpdatedSinceLaunch>检测到 {0} 个模组自上次启动后被更新：{1}。若刚才还能进房间，现在被拒绝，多半就是这个原因。</TurboTick_ModCheck_UpdatedSinceLaunch>
   <TurboTick_ModCheck_RoomOlderMark>房间旧 {0}</TurboTick_ModCheck_RoomOlderMark>
   <TurboTick_ModCheck_LocalOlderMark>本机旧 {0}</TurboTick_ModCheck_LocalOlderMark>

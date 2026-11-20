@@ -262,6 +262,11 @@ internal sealed class ModSyncDialog : Window
         if (row.OlderSide is { } older)
             text += "\n" + T(older == "room" ? "TurboTick_ModCheck_RoomIsOlder" : "TurboTick_ModCheck_LocalIsOlder",
                 Stamped(row.ServerStamped), Stamped(row.LocalStamped));
+        // Same question for a version mismatch, answered from the version strings instead of the timestamps - and this
+        // is the row the player actually hit: a stale duplicate copy of a dependency (Harmony lived in both Mods/ and
+        // the workshop cache) makes the game load the old one, so the table said "版本不同" without saying who moves.
+        if (row.VersionOlderSide is { } behind)
+            text += "\n" + T(behind == "room" ? "TurboTick_ModCheck_RoomVersionOlder" : "TurboTick_ModCheck_LocalVersionOlder");
         var hint = row.Verdict switch
         {
             ModVerdict.Missing => "TurboTick_ModCheck_MissingHint",

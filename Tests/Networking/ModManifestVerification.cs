@@ -226,6 +226,44 @@ internal static class ModManifestVerification
                 && text.Contains("TurboTick_ModCheck_CountVersion(1)"), "Summary did not count the verdicts: " + text);
             Assert(ModManifest.Summary([rows[0]], null).Length > 0, "A clean list still needs a summary line.");
         });
+
+        await check("a version difference names which side has to update", async () =>
+        {
+            // The field case this exists for: the server ran Harmony 3.0.1 and the client 3.0.4. The table said
+            // "版本不同" and both sides then copied files by hand, because nothing said who was behind. Ordering the
+            // strings numerically is the whole fix - "3.0.10" vs "3.0.9" is the case a string compare gets backwards.
+            Assert(ModManifest.CompareVersionStrings("3.0.1.0", "3.0.4.0") < 0, "3.0.1.0 must order below 3.0.4.0.");
+            Assert(ModManifest.CompareVersionStrings("3.0.10", "3.0.9") > 0, "3.0.10 must order above 3.0.9.");
+            Assert(ModManifest.CompareVersionStrings("1.0", "1.0.0") == 0, "Missing trailing segments are zero, not a mismatch.");
+            Assert(ModManifest.CompareVersionStrings("2.1", "") != 0, "A declared version against an undeclared one is a difference.");
+
+            var server = new List<ModEntry>
+            {
+                new("brrainz.harmony", "Harmony", 0, "2009463077", "3.0.1.0"),
+                new("turbo.tick", "TurboTick", 1, "0", "0.7.4")
+            };
+            var local = new List<ModEntry>
+            {
+                new("brrainz.harmony", "Harmony", 0, "2009463077", "3.0.4.0"),
+                new("turbo.tick", "TurboTick", 1, "0", "0.7.4")
+            };
+            var rows = ModManifest.Check(server, local);
+            Assert(rows[0].VersionOlderSide == "room", "The room's older copy was not named.");
+            Assert(rows[1].VersionOlderSide is null, "An agreeing mod has no older side.");
+            var explain = ModManifest.ExplainVersions(rows, null, "服务端", "客户端");
+            Assert(explain.Contains("Harmony") && explain.Contains("3.0.1.0") && explain.Contains("3.0.4.0")
+                && explain.Contains("update the server"), "The explanation did not name the mod, both versions and the side: " + explain);
+            Assert(ModManifest.ExplainVersions(rows, null).Contains("房间 3.0.1.0"), "The client view must speak of 房间/本地: "
+                + ModManifest.ExplainVersions(rows, null));
+
+            // And the mirror case, which is the player's: their copy is the old one.
+            var flipped = ModManifest.Check(
+                [new ModEntry("brrainz.harmony", "Harmony", 0, "2009463077", "3.0.4.0")],
+                [new ModEntry("brrainz.harmony", "Harmony", 0, "2009463077", "3.0.1.0")]);
+            Assert(flipped[0].VersionOlderSide == "local", "The local side was not named when it is the older one.");
+            Assert(ModManifest.ExplainVersions(flipped).Contains("update this client"),
+                "The explanation must tell the player which copy to update.");
+        });
     }
 
     private static void Assert(bool condition, string message)

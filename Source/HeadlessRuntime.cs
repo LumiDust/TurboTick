@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -2465,6 +2465,12 @@ internal static class HeadlessRuntime
                 gameTick = hasGame ? Safe(() => Find.TickManager?.TicksGame, (int?)null) : null,
                 phase = SharedColony.Session.Phase.ToString(), checkpointTick = server?.CheckpointTick,
                 connected = RoomConnection.Client?.IsConnected == true, modHash = server?.LockedModHash,
+                // Which mod is out of step and which side has to move. Written beside the fingerprints because a
+                // refusal is the one thing an operator has to act on, and the server's own console is not where
+                // they look: the page is. Cleared by the next handshake that agrees.
+                modMismatch = ModMismatchState.Last,
+                modMismatchUtc = ModMismatchState.AtUtc == 0 ? (long?)null : ModMismatchState.AtUtc,
+                modRefusals = ModMismatchState.Refused,
                 authoritative = server is { } running && running.Session?.Authoritative == true,
                 lastFrameTick = Volatile.Read(ref lastFrameTick),
                 framesSent = Volatile.Read(ref framesSent),

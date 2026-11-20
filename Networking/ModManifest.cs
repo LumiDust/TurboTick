@@ -67,6 +67,27 @@ public sealed record ModCheck(ModVerdict Verdict, string PackageId, string Name,
             return ServerStamped < LocalStamped ? "room" : "local";
         }
     }
+    /// <summary>Which side carries the older <c>&lt;modVersion&gt;</c>, or <c>null</c> when the two strings cannot be
+    /// ordered.
+    ///
+    /// <para>The verdict alone said "these differ", and every operator then had to open both <c>About.xml</c> files to
+    /// learn which one to update. Naming the side is the difference between a report and an instruction: the player
+    /// updates a local mod, the operator updates the server's copy, and for a mod that ships on the workshop both are
+    /// the same download.</para></summary>
+    public string? VersionOlderSide
+    {
+        get
+        {
+            if (Verdict != ModVerdict.VersionMismatch) return null;
+            return ModManifest.CompareVersionStrings(ServerVersion, LocalVersion) switch
+            {
+                < 0 => "room",     // the server's copy is the older one
+                > 0 => "local",
+                _ => null,
+            };
+        }
+    }
+
     /// <summary>What the player has to do, or an empty string when nothing is wrong.</summary>
     public string Action => Verdict switch
     {
@@ -263,7 +284,39 @@ public static class ModManifest
         var b = (local ?? "").Trim();
         if (a.Length == 0 && b.Length == 0) return false;
         if (a.Length == 0 || b.Length == 0) return true;
-        return !string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        // Numeric order, not string order: "3.0.10" and "3.0.9" are different builds and "1.0" and "1.0.0" are not.
+        return CompareVersionStrings(a, b) != 0;
+    }
+
+    /// <summary>Orders two <c>&lt;modVersion&gt;</c> strings: negative when <paramref name="left"/> is older.
+    ///
+    /// <para>Dotted numbers are compared as numbers, not as text: <c>"3.0.10"</c> is newer than <c>"3.0.9"</c> and a
+    /// string comparison gets that backwards. Anything that does not parse (a date, a git hash, <c>"v1-beta"</c>)
+    /// falls back to an ordinal comparison, which is arbitrary but stable - and the caller only uses the sign to say
+    /// which side to update, never to decide whether the two builds are compatible.</para>
+    ///
+    /// <para>Missing trailing segments count as zero, so <c>"1.0"</c> and <c>"1.0.0"</c> compare equal: two mods that
+    /// wrote the same version two ways are not a version mismatch worth a row in the table.</para></summary>
+    public static int CompareVersionStrings(string? left, string? right)
+    {
+        var a = (left ?? "").Trim();
+        var b = (right ?? "").Trim();
+        if (a.Length == 0 || b.Length == 0) return string.CompareOrdinal(a, b);
+        var pa = a.Split('.');
+        var pb = b.Split('.');
+        for (var i = 0; i < Math.Max(pa.Length, pb.Length); i++)
+        {
+            var sa = i < pa.Length ? pa[i] : "0";
+            var sb = i < pb.Length ? pb[i] : "0";
+            if (int.TryParse(sa, out var na) && int.TryParse(sb, out var nb))
+            {
+                if (na != nb) return na < nb ? -1 : 1;
+                continue;
+            }
+            var text = string.CompareOrdinal(sa, sb);
+            if (text != 0) return text < 0 ? -1 : 1;
+        }
+        return 0;
     }
 
     /// <summary>Every mod with a verdict, room list first then anything the room does not have. This is what the
@@ -352,6 +405,32 @@ public static class ModManifest
                 .Append(contents.Count > 5 ? "…" : "");
         }
         return text.Length == 0 ? "模组列表一致" : text.ToString();
+    }
+
+    /// <summary>One line per version-mismatched mod, with both versions and the side that has to move.
+    ///
+    /// <para>This is the sentence a server operator needs from their own console: the room's copy of <c>Harmony</c>
+    /// being older than the player's is the server's problem, and the same words tell the player the opposite case.
+    /// Empty when no mod differs by version.</para></summary>
+    public static string ExplainVersions(IReadOnlyList<ModCheck> rows, Func<string, object[], string>? t = null,
+        string serverLabel = "房间", string localLabel = "本地")
+    {
+        var mismatched = rows.Where(row => row.Verdict == ModVerdict.VersionMismatch).ToList();
+        if (mismatched.Count == 0) return "";
+        var parts = new List<string>(mismatched.Count);
+        foreach (var row in mismatched)
+        {
+            var side = row.VersionOlderSide;
+            var note = side switch
+            {
+                "room" => t is null ? "room copy is older - update the server" : t("TurboTick_ModCheck_RoomOlder", []),
+                "local" => t is null ? "local copy is older - update this client" : t("TurboTick_ModCheck_LocalOlder", []),
+                _ => t is null ? "cannot order these version strings" : t("TurboTick_ModCheck_VersionUnordered", []),
+            };
+            parts.Add($"{row.Name} {serverLabel} {Show(row.ServerVersion)} / {localLabel} {Show(row.LocalVersion)}：{note}");
+        }
+        return string.Join("；", parts);
+        static string Show(string version) => string.IsNullOrWhiteSpace(version) ? "未声明" : version.Trim();
     }
 
     /// <summary>JSON of the server's list, for the error that reports the mismatch.</summary>

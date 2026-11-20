@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Channels;
@@ -488,6 +488,25 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                 // server side at all. Name the peer and both fingerprints; the client writes the per-file
                 // breakdown next to its own copy, so these two lines plus that file identify the culprit.
                 Console.WriteLine($"[server] rejected {Describe(hello)}: mod fingerprint is {hello.ModHash}, room requires {modHash}");
+                // Which mod, and which side has to move. The fingerprint alone made the operator diff two
+                // manifests by hand; the room's own list is already recorded, so the same table the client
+                // shows can be printed here with the sides named the other way round.
+                if (ModManifest.Parse(Volatile.Read(ref _lockedMods) ?? "") is { Count: > 0 } room
+                    && ModManifest.Parse(hello.Mods ?? "") is { Count: > 0 } theirs)
+                {
+                    var rows = ModManifest.Check(room, theirs);
+                    var explain = ModManifest.ExplainVersions(rows, null, "服务端", "客户端");
+                    if (explain.Length > 0)
+                    {
+                        Console.WriteLine("[server] 模组版本：" + explain);
+                        ModMismatchState.Set(explain);
+                    }
+                    else
+                    {
+                        var plain = ModManifest.Describe(ModManifest.Compare(room, theirs));
+                        ModMismatchState.Set(plain);
+                    }
+                }
                 throw new NetworkException("ModHashMismatch", "Simulation assemblies, XML, mod order or configuration differ from the server.");
             }
             if (_lockedGameVersion is null || _lockedModHash is null)
@@ -496,6 +515,8 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                 Volatile.Write(ref _lockedGameVersion, version);
                 Volatile.Write(ref _lockedModHash, modHash);
             }
+            // The room has an admitted peer whose manifest agrees, so a stale refusal line would now be misleading.
+            ModMismatchState.Clear();
             peer.IsSimulation = isSimulation;
             peer.CanEdit = !isSimulation && (_options.EveryoneCanEdit || _controllerId is null);
             if (!isSimulation && !_options.EveryoneCanEdit && _controllerId is null) _controllerId = peer.Id;
