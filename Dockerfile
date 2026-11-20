@@ -34,6 +34,9 @@ COPY scripts/steamcmd/install-server.sh /opt/turbotick/install-server.sh
 COPY deploy/container/entrypoint.sh deploy/container/steamcmd.sh deploy/container/container.py /opt/turbotick/
 # steamcmd asks for the password on a prompt with no newline; without a pty its stdout is block-buffered and
 # the portal waits three minutes for a line that was never flushed. The portal looks for this exact path.
+# The management page as a separate process: `TURBOTICK_SUPERVISOR=portal` starts it and it starts the game, so a
+# world swap only restarts the child. CI publishes it into deploy/container/portal/ before the build.
+COPY deploy/container/portal/ /opt/turbotick/portal/
 COPY deploy/container/scripts/pty-run.py /opt/turbotick/scripts/pty-run.py
 COPY LICENSE /opt/turbotick/LICENSE
 ENV TURBOTICK_MOD_VERSION=${TURBOTICK_MOD_VERSION}

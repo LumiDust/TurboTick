@@ -16,6 +16,8 @@ services:
       - /tmp:rw,exec,nosuid,nodev,size=512m,mode=1777
     ports:
       - "${TURBOTICK_BIND_ADDRESS:-0.0.0.0}:${TURBOTICK_PUBLISHED_PORT:-30572}:30572/tcp"
+      # The management page is served by the container's own portal when TURBOTICK_SUPERVISOR=portal.
+      - "${TURBOTICK_ADMIN_BIND_ADDRESS:-0.0.0.0}:${TURBOTICK_ADMIN_PUBLISHED_PORT:-30573}:30573/tcp"
     environment:
       TURBOTICK_HOST: "0.0.0.0"
       TURBOTICK_PORT: "30572"
@@ -24,6 +26,12 @@ services:
       XDG_CONFIG_HOME: /profile/.config
       TURBOTICK_CONTROLLER_ONLY: "${TURBOTICK_CONTROLLER_ONLY:-false}"
       TURBOTICK_SAVE: "${TURBOTICK_SAVE:-}"
+      # portal = the management page owns the game process, so start/stop/save-switch work from the page.
+      TURBOTICK_SUPERVISOR: "${TURBOTICK_SUPERVISOR:-portal}"
+      TURBOTICK_ADMIN_PORT: "${TURBOTICK_ADMIN_PORT:-30573}"
+      TURBOTICK_ADMIN_BIND: "${TURBOTICK_ADMIN_BIND:-0.0.0.0}"
+      TURBOTICK_ADMIN_PASSWORD: "${TURBOTICK_ADMIN_PASSWORD:-}"
+      TURBOTICK_ADMIN_PASSWORD_FILE: "${TURBOTICK_ADMIN_PASSWORD_FILE:-}"
       TURBOTICK_EXPECTED_GAME_VERSION: "${TURBOTICK_EXPECTED_GAME_VERSION:-1.7}"
       TURBOTICK_HEALTH_MAX_AGE_SECONDS: "${TURBOTICK_HEALTH_MAX_AGE_SECONDS:-30}"
     volumes:

@@ -25,7 +25,10 @@ EOF
 }
 mode="${1:-run}"
 [[ $# -eq 0 ]] || shift
-case "$mode" in --help|-h|help) usage; exit 0 ;; run|install|check-update|watch-updates) ;; *) die "unknown stage '$mode'; use install, run, check-update or watch-updates" ;; esac
+case "$mode" in --help|-h|help) usage; exit 0 ;; run|install|check-update|watch-updates|portal|game) ;; *) die "unknown stage '$mode'; use install, run, portal, game, check-update or watch-updates" ;; esac
+# The container can be the supervisor of the game (portal mode) or the launcher (inline). The flag only
+# decides which process owns the child; nothing else in this script changes.
+if [[ "$mode" == run && "${TURBOTICK_SUPERVISOR:-inline}" == portal ]]; then mode=portal; fi
 export HOME="$PROFILE_DIR" XDG_CONFIG_HOME="$PROFILE_DIR/.config" TURBOTICK_DATA="$STATE"
 
 # SteamCMD bootstrap: the image carries an immutable seed, the /steam volume carries the copy that may
@@ -72,6 +75,58 @@ check_update() {
   rm -f -- "$transcript"
 }
 
+# Both `run` (inline) and `game` (child of the portal) end here: the preflight decides, then the game owns the
+# deployment lock and the process. A world swap is a process swap, so only the parent differs between shapes.
+start_game() {
+  helper writable "$PROFILE_DIR" "$STATE"
+  # FD 9 survives exec, so the actual game owns this lock for its entire lifetime.
+  exec 9>"$STATE/deployment.lock"
+  flock -n 9 || die 'deployment.lock is held by another install/run; stop that instance before changing game/profile/state'
+  mkdir -p "$XDG_CONFIG_HOME"
+  for arg in "$@"; do
+    case "${arg,,}" in
+      -savedatafolder*|-turbotick-data*) die 'profile/state paths are fixed at /profile and /state' ;;
+    esac
+  done
+  helper preflight "$GAME" "$PROFILE_DIR" "$ROOT/payload.sha256.json"
+  # A previous process's status must not make the next process appear healthy.
+  rm -f "$STATE/headless-status.json"
+  cd "$GAME"
+  export LD_LIBRARY_PATH="$GAME"
+  log 'starting native RimWorld; SIGTERM is delivered directly to the game (allow 90 seconds to checkpoint)'
+  exec "$GAME/RimWorld" -headless -turbotick-server "-savedatafolder=$PROFILE_DIR" "$@"
+}
+
+if [[ "$mode" == portal ]]; then
+  [[ -n "${TURBOTICK_ADMIN_PASSWORD:-}${TURBOTICK_ADMIN_PASSWORD_FILE:-}" ]] \
+    || die 'portal mode needs TURBOTICK_ADMIN_PASSWORD or TURBOTICK_ADMIN_PASSWORD_FILE'
+  portal="${TURBOTICK_PORTAL_EXE:-}"
+  if [[ -z "$portal" ]]; then
+    # Two shapes exist: the image bakes it beside the entrypoint, a mounted deployment drops it under portal/.
+    if [[ -x /opt/turbotick/TurboTick.Portal ]]; then portal=/opt/turbotick/TurboTick.Portal
+    else portal=/opt/turbotick/portal/TurboTick.Portal; fi
+  fi
+  [[ -x "$portal" ]] || die "portal mode needs an executable management page at $portal (set TURBOTICK_PORTAL_EXE or ship TurboTick.Portal)"
+  # The game this portal starts must leave the admin port to the portal.
+  exec env TURBOTICK_ADMIN_INPROCESS=off "$portal" \
+    --port "${TURBOTICK_ADMIN_PORT:-30573}" \
+    --bind "${TURBOTICK_ADMIN_BIND:-0.0.0.0}" \
+    --data "$STATE" \
+    --game "$GAME" \
+    --saves "$PROFILE_DIR/Saves" \
+    --mods "$GAME/Mods" \
+    --config "$PROFILE_DIR/Config/ModsConfig.xml" \
+    --backups "${TURBOTICK_BACKUP_DIR:-$STATE/Backups}" \
+    --checkpoint-minutes "${TURBOTICK_CHECKPOINT_MINUTES:-10}" \
+    --steam-root /steam \
+    --steamcmd "$ROOT/steamcmd.sh" \
+    --game-exe "$0" \
+    --game-arg game
+fi
+if [[ "$mode" == game ]]; then
+  start_game "$@"
+fi
+
 if [[ "$mode" == check-update ]]; then
   check_update
   exit 0
@@ -93,19 +148,7 @@ exec 9>"$STATE/deployment.lock"
 flock -n 9 || die 'deployment.lock is held by another install/run; stop that instance before changing game/profile/state'
 mkdir -p "$XDG_CONFIG_HOME"
 if [[ "$mode" == run ]]; then
-  for arg in "$@"; do
-    case "${arg,,}" in
-      -savedatafolder*|-turbotick-data*) die 'profile/state paths are fixed at /profile and /state' ;;
-    esac
-  done
-  helper preflight "$GAME" "$PROFILE_DIR" "$ROOT/payload.sha256.json"
-  # A previous process's status must not make the next process appear healthy.
-  rm -f "$STATE/headless-status.json"
-  cd "$GAME"
-  # The game ships mutually dependent native libraries (png/zlib/imgui).
-  export LD_LIBRARY_PATH="$GAME"
-  log 'starting native RimWorld; SIGTERM is delivered directly to the game (allow 90 seconds to checkpoint)'
-  exec "$GAME/RimWorld" -headless -turbotick-server "-savedatafolder=$PROFILE_DIR" "$@"
+  start_game "$@"
 fi
 
 skip=0 update_harmony=0 validate=1

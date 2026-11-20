@@ -79,6 +79,18 @@ jobs:
           unzip -q "artifacts/runtime-packages/TurboTick-$VERSION-mod-1.7.zip" -d artifacts/container-mod
           test -f artifacts/container-mod/TurboTick/1.7/Assemblies/TurboTick.dll
           test "$(find artifacts/container-mod -name '*.dll' | wc -l)" -eq 3
+      # The management page is a self-contained single file: the image must carry it or `portal` mode has
+      # nothing to exec. Publishing here keeps the SDK out of the runtime image.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish management portal (linux-x64, self-contained)
+        run: |
+          set -euo pipefail
+          dotnet publish Portal/TurboTick.Portal.csproj -c Release -r linux-x64 --self-contained \
+            -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true \
+            -o deploy/container/portal
+          test -x deploy/container/portal/TurboTick.Portal
       - uses: docker/setup-buildx-action@v3
       - name: Build amd64 headless image without game or credentials
         uses: docker/build-push-action@v6
