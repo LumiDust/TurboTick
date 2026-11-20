@@ -139,6 +139,15 @@ docker image inspect ghcr.io/lumidust/turbotick-headless:0.7.1 --format '{{.Id}}
 或自建 override 里给 `installer` 与 `headless` 都加 `pull_policy: never`。导入后照常执行
 `install --skip-download` 安装游戏，再 `up -d headless`。
 
+### 2c. 国内机房：Steam 与 ghcr 都需要借出口
+
+机房常只放行国内网段。表现是 `update-check` 写 `status: unavailable`（`SteamCMD did not answer within 120s`），
+`docker pull ghcr.io/...` 报 `dial tcp …: i/o timeout`。**换 DNS 解决不了**：`223.5.5.5`、`119.29.29.29`、
+`114.114.114.114` 解析出的 Akamai/Steam 边缘 IP 在 443 上全部被丢弃，而国内站点都是 200。
+做法是让一台有出口的机器（中继机）提供 CONNECT 代理，反向转发到专服的 docker 网桥地址，再把这条代理
+喂给 Docker 守护进程和容器里的 SteamCMD——完整步骤、systemd 单元与验证命令见
+**[EGRESS-PROXY.md](EGRESS-PROXY.md)**。
+
 ### 3. 可选代理：只传给 installer
 
 容器内 `127.0.0.1` 指向容器本身，宿主仅监听回环的代理不会自动可达。可将代理监听在容器可达的宿主地址，并使用 `http://PROXY_HOST:PROXY_PORT`；Linux Docker 也可用 `host.docker.internal:host-gateway` 映射。

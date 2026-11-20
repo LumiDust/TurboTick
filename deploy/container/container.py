@@ -361,7 +361,10 @@ def main():
         health(paths[0])
     elif command == "update-status":
         game, transcript, state = paths
-        update_status(game, transcript, state, args[3] if len(args) > 3 else None)
+        # The entrypoint passes the branch when it knows it; a container whose entrypoint predates that still
+        # names the branch through the environment, which is how this fix reaches an existing deployment.
+        branch = args[3] if len(args) > 3 else os.environ.get("TURBOTICK_GAME_BRANCH") or None
+        update_status(game, transcript, state, branch)
     elif command == "update-failed":
         state, reason = paths[0], args[1]
         update_failure(state, reason, paths[2] if len(paths) > 2 else None)
