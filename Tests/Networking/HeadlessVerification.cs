@@ -115,6 +115,10 @@ internal static class HeadlessVerification
         // The lead is a duration, not a constant: at 4x (rate 15) six ticks is 6.7 ms, shorter than a progress
         // round trip, so the gate must open to the scaled lead instead of collapsing the budget to one or two
         // ticks per loop. Both halves are asserted - it opens to that lead and it stops exactly there.
+        // The room adopts the new policy on its own loop, so the diagnostics lead lags the controller command by a
+        // frame or two. Reading it immediately measured the *old* speed and made this a race that passed locally
+        // and failed on the runner.
+        await Until(() => server.SimulationLeadTicksForDiagnostics > NetworkProtocol.SimulationLeadTicks);
         var fastLead = server.SimulationLeadTicksForDiagnostics;
         Assert(fastLead > NetworkProtocol.SimulationLeadTicks,
             $"A 4x room kept the vanilla-speed lead of {NetworkProtocol.SimulationLeadTicks} ticks.");
