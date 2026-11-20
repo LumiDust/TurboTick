@@ -62,7 +62,8 @@ docker compose --profile watch up -d update-check
 - 游戏有新 build 时：停服 → `docker compose --profile setup run --rm installer install --user ACCOUNT` → 起服。
 - 换版本镜像：`TURBOTICK_IMAGE=ghcr.io/lumidust/turbotick-headless:<版本>` 后 `docker compose up -d headless`，
   payload 不一致会拒绝启动并提示重装。
-- 本地构建（无 ghcr 出口时）：`docker build -t turbotick-headless:0.7.1 .`，再把 `TURBOTICK_IMAGE` 指向该标签。
+- 本地构建（无 ghcr 出口时）：`docker build -t turbotick-headless:0.7.1 .`，再把 `TURBOTICK_IMAGE` 指向该标签；
+  或者在有出口的机器 `docker save` 后到目标机 `docker load`，见 [deploy/README.md](deploy/README.md) 的「无外网出口时离线导入镜像」。
 - 完整变量表、目录权限、文件清单与回滚：见 [`deploy/container/README.md`](deploy/container/README.md)。
 
 协调器（旧形态，不需要游戏本体）：`deploy/turbotick-coordinator.service` + `TurboTick-0.7.1-coordinator-linux-x64`，
