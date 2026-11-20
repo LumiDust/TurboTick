@@ -2239,8 +2239,11 @@ internal static partial class AdminPage
         ReplyAsync(stream, 405, JsonError("method-not-allowed", "只接受 " + allow),
             token, ("Allow", allow));
 
+    // `detail` is the name the page has read since the first version, while this serializer only ever emitted
+    // `message`. Every failure therefore rendered as its machine code ("失败：login-refused") and the sentence
+    // that said what to fix was dropped on the floor. Emit both, and keep `code` for scripts.
     private static string JsonError(string code, string message) =>
-        JsonSerializer.Serialize(new { ok = false, code, message }, Compact);
+        JsonSerializer.Serialize(new { ok = false, code, message, detail = message }, Compact);
 
     private static async Task ReplyAsync(NetworkStream stream, int status, string body, CancellationToken token,
         params (string Name, string Value)[] extra)

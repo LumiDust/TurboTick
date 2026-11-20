@@ -663,6 +663,10 @@ internal static class AdminPageHtml
       var text = await response.text();
       var data;
       try { data = text ? JSON.parse(text) : {}; } catch (e) { data = { ok: false, code: "bad-json", detail: text.slice(0, 200) }; }
+      // One place decides what a failure says. The server has emitted `message` since the first version while the
+      // page read `detail`, so every error rendered as its machine code; both names are now normalised here instead
+      // of at each of the dozen call sites.
+      if (data && !data.detail && data.message) data.detail = data.message;
       if (!response.ok && data && data.code === "session-expired") banner("会话已失效，请重新登录。", false);
       return data;
     }
@@ -1569,7 +1573,7 @@ internal static class AdminPageHtml
         var data = await post("/api/steam/login", { account: user, password: pass });
         $("steamPass").value = "";
         if (!data.ok) {
-          msg("steamResult", "失败：" + (data.detail || data.code), "err");
+          msg("steamResult", "失败：" + (data.message || data.detail || data.code), "err");
           return;
         }
         // The login is a conversation: steamcmd may answer with a Steam Guard prompt, and only a poll finds that
@@ -1583,7 +1587,7 @@ internal static class AdminPageHtml
         msg("steamResult", "正在提交验证码…");
         var data = await post("/api/steam/code", { code: code });
         $("steamCode").value = "";
-        if (!data.ok) { msg("steamResult", "验证码被拒：" + (data.detail || data.code), "err"); return; }
+        if (!data.ok) { msg("steamResult", "验证码被拒：" + (data.message || data.detail || data.code), "err"); return; }
         msg("steamResult", "验证码已提交，等待校验…");
         watchSteamLogin();
       });
@@ -1591,7 +1595,7 @@ internal static class AdminPageHtml
         var branch = $("versionSelect").value;
         msg("downloadResult", "已请求下载…");
         var data = await post("/api/game/download", { branch: branch });
-        msg("downloadResult", data.ok ? (data.detail || "已开始") : "失败：" + (data.detail || data.code),
+        msg("downloadResult", data.ok ? (data.detail || "已开始") : "失败：" + (data.message || data.detail || data.code),
           data.ok ? "good" : "err");
       });
       $("progressRefresh").addEventListener("click", async function () {

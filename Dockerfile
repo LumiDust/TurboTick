@@ -32,6 +32,9 @@ RUN test "$TARGETARCH" = amd64 \
 COPY artifacts/container-mod/TurboTick/ /opt/turbotick/mod/TurboTick/
 COPY scripts/steamcmd/install-server.sh /opt/turbotick/install-server.sh
 COPY deploy/container/entrypoint.sh deploy/container/steamcmd.sh deploy/container/container.py /opt/turbotick/
+# steamcmd asks for the password on a prompt with no newline; without a pty its stdout is block-buffered and
+# the portal waits three minutes for a line that was never flushed. The portal looks for this exact path.
+COPY deploy/container/scripts/pty-run.py /opt/turbotick/scripts/pty-run.py
 COPY LICENSE /opt/turbotick/LICENSE
 ENV TURBOTICK_MOD_VERSION=${TURBOTICK_MOD_VERSION}
 RUN python3 /opt/turbotick/container.py manifest /opt/turbotick/mod/TurboTick /opt/turbotick/payload.sha256.json \
