@@ -7,45 +7,58 @@
 
 独立的共享殖民地联机 Mod，支持多人共同操作同一世界。由**客户端 Mod**和**协调器专服**组成：每个玩家在本地完整模拟这份殖民地，专服只排定操作顺序、按最慢玩家的进度推进时间线并保存快照，自身不跑殖民地模拟。游戏端依赖 [Harmony 3](https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077)；不依赖其他联机 Mod。
 
-## 为什么是协调器而不是权威服务器
+## 专服形态：镜像里的权威副本
+
+0.7.1 的专服以 **容器镜像** 为发布单位（`ghcr.io/lumidust/turbotick-headless:0.7.1`，linux/amd64）。
+镜像里跑的是**加载真实 RimWorld 的权威副本**：世界在服务器上推进，玩家端的副本按状态通道逐项跟随
+（小人、物品、世界物件、尸体追踪、消息与档案、视觉载体、方案表……），所以动画与寻路仍是原生行为。
+部署见 [`deploy/container/README.md`](deploy/container/README.md)。
 
 | 方案 | 模拟器数量 | 动画与寻路 | 需要同步的份数 |
 |---|---|---|---|
-| **协调器 + 每端模拟**（本版） | N | 原生正确 | N |
-| 服务器唯一模拟 + 显示副本 | 1 | 做不到：冻结的 tick 没有可绘制的内容，位置只能按帧硬写回 | 0，但要为渲染另造一套 |
-| 服务器也模拟（锁步） | N+1 | 原生正确 | N+1 |
+| **权威副本 + 每端副本**（0.7.1 默认） | 1 个权威 + N 个副本 | 原生正确 | N 份状态差量 |
+| 协调器 + 每端模拟（0.6.1–0.7.0） | N | 原生正确 | N 份命令与回执 |
 
-服务器多一个模拟器不会带来任何能力提升，只是把需要同步的状态从 N 变成 N+1。所以 0.6.1 起专服不再加载殖民地、不再引用游戏程序集，也就不需要安装 RimWorld。
+协调器（自包含单文件、不加载游戏）仍在发布附件里，供不装游戏本体、或只有 0.6.1–0.7.0 客户端的旧局使用。
 
 ## 下载与安装
 
-从 [0.7.0 Release](https://github.com/LumiDust/TurboTick/releases/tag/v0.7.1) 下载配套附件；玩家也可订阅 [Steam 创意工坊](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013)。固定世界请保留同一次 Release 的原包，避免客户端与专服在不同时间更新。
+从 [0.7.1 Release](https://github.com/LumiDust/TurboTick/releases/tag/v0.7.1) 下载配套附件；玩家也可订阅 [Steam 创意工坊](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013)。固定世界请保留同一次 Release 的原包，避免客户端与专服在不同时间更新。
 
 | 附件 | 用途 |
 |---|---|
 | `TurboTick-0.7.1-mod-1.7.zip` | 玩家客户端；解压后把完整 `TurboTick` 目录放入游戏 `Mods` |
-| `TurboTick-0.7.0-coordinator-linux-x64` | 专服；自包含单文件，**不需要安装游戏本体** |
+| `TurboTick-0.7.1-headless-installer.zip` | 专服部署包：`docker-compose.yml`、`.env.example`、`scripts/steamcmd/`、`deploy/container/` 与同字节的 `TurboTick/` |
+| `TurboTick-0.7.1-coordinator-linux-x64` | 旧形态协调器；自包含单文件，**不需要安装游戏本体** |
 
 玩家启用 Harmony、TurboTick 和与专服完全一致的其他模组后重启游戏。
 
 ## 部署专服
 
-协调器是一个自包含的 .NET 单文件程序，目标机只需要 x64 Linux：
+镜像部署（推荐）：
 
 ```sh
-install -m 0755 TurboTick-0.7.0-coordinator-linux-x64 /srv/turbotick/TurboTick.Server
+# 需要 Docker Engine 与 Compose v2；宿主准备 4 个数据目录（uid/gid 10001）
+docker compose --env-file .env config --quiet
+docker compose --profile setup run --rm installer install   # 首次：SteamCMD 登录并安装游戏 + Harmony
+docker compose up -d headless                               # 之后只起 run
+```
+
+`/game` 放 RimWorld 本体与 `Mods/Harmony`，`/profile` 放配置与存档，`/state` 放运行状态；
+镜像会在启动前逐文件校验 `Mods/TurboTick` 与镜像内容是否一致。也可以
+`docker build -t turbotick-headless:0.7.1 .` 本地构建后把 `TURBOTICK_IMAGE` 指向该标签。
+完整变量表、目录权限与文件清单见 [`deploy/container/README.md`](deploy/container/README.md)。
+
+协调器（旧形态，不需要游戏本体）：
+
+```sh
+install -m 0755 TurboTick-0.7.1-coordinator-linux-x64 /srv/turbotick/TurboTick.Server
 mkdir -p /srv/turbotick/state
 printf '%s' 'YOUR-ADMIN-PASSWORD' > /srv/turbotick/secrets/admin-password
 chmod 400 /srv/turbotick/secrets/admin-password
 ```
 
-`deploy/turbotick-coordinator.service` 是一份可直接使用的 systemd 单元。运行参数也可以走环境变量：`TURBOTICK_HOST`、`TURBOTICK_PORT`、`TURBOTICK_DATA`、`TURBOTICK_GAME_VERSION`、`TURBOTICK_MOD_HASH`、`TURBOTICK_ADMIN_PASSWORD_FILE`。
-
-常用参数：`--host` 绑定地址（默认 127.0.0.1）、`--port` 端口（默认 30572，0 表示随机）、`--data` 状态与快照目录、`--game-version` / `--mod-hash` 预锁定兼容指纹、`--controller-only` 只允许一个控制者、`--import` 导入本地快照。`--help` 列全量。
-
-没配管理密码时管理功能关闭；配置后在大厅「管理服务器」独立认证，可查看状态、归档旧局并重开空房间。
-
-> `deploy/container/`、`scripts/steamcmd/` 与 `deploy/turbotick-headless.service` 属于 0.6.0 的 headless 游戏托管部署，供历史版本回退使用；0.7.0 的专服不需要它们。
+`deploy/turbotick-coordinator.service` 是可直接使用的 systemd 单元；`--help` 列全部参数。
 
 ## 主持与加入
 
