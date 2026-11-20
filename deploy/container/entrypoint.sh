@@ -30,6 +30,10 @@ case "$mode" in --help|-h|help) usage; exit 0 ;; run|install|check-update|watch-
 # decides which process owns the child; nothing else in this script changes.
 if [[ "$mode" == run && "${TURBOTICK_SUPERVISOR:-inline}" == portal ]]; then mode=portal; fi
 export HOME="$PROFILE_DIR" XDG_CONFIG_HOME="$PROFILE_DIR/.config" TURBOTICK_DATA="$STATE"
+# The mod planner reads DLC content from <game-dir>/Data. Compose cannot pass this name through (it is also the
+# host bind source), so a deployment without an override made the preflight look under /state and call every
+# expansion missing even though /game/Data had them. Inside the container the value is always /game.
+export TURBOTICK_GAME_DIR="$GAME"
 
 # SteamCMD bootstrap: the image carries an immutable seed, the /steam volume carries the copy that may
 # self-update. install and check-update both need it, and neither may touch the deployment lock.
