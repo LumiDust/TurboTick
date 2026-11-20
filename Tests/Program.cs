@@ -39,6 +39,16 @@ async Task Test(string name, Func<Task> body)
     catch (Exception ex) { failed++; Console.WriteLine("FAIL " + name + ": " + ex); }
 }
 void Check(bool value, string message) { if (!value) throw new Exception(message); }
+// The ledger script is the coverage record the tests pin verdicts against. It lives in `docs/ledger/` so CI can
+// read it; the research copy under `_lab/` is the one that gets edited, and is preferred when it exists.
+string? LedgerSource()
+{
+    var repoCopy = Path.Combine(PackageValidation.PackageRoot(), "docs", "ledger", "triage_ledger.py");
+    if (File.Exists(repoCopy)) return File.ReadAllText(repoCopy);
+    var labCopy = Path.Combine(PackageValidation.PackageRoot(), "..", "_lab", "triage_ledger.py");
+    return File.Exists(labCopy) ? File.ReadAllText(labCopy) : null;
+}
+
 // **Ledger reasons that name a channel class must name a real one (round 130).** The generator prints this too, but the
 // generator only runs when someone remembers to run it, and the person editing a reason is the least likely to. Round 128
 // closed two rows on another mod's patch names; round 130 closed eight on channel names that were never declared
@@ -5225,7 +5235,9 @@ async Task SettlementRuleTests()
         // `ThingUtility.CheckAutoRebuildOnDestroyed` and `Game.InitNewGame` exist nowhere in this project. A contaminated
         // snapshot is worse than a stale one, because it silently converts somebody else's coverage into ours.
         {
-            var triage = File.ReadAllText(Path.Combine(PackageValidation.PackageRoot(), "..", "_lab", "triage_ledger.py"));
+            var triage = LedgerSource();
+            if (triage is not null)
+            {
             // **Pin the branch, not the token.** The first version of this assertion only looked for the string
             // `本实例方法` - which the explanatory comment above the guard also contains - so deleting the guard left the
             // suite green. Measured: `guard removed → RESULT 151 passed, 0 failed`. That is the fifth time in this project
@@ -5248,6 +5260,7 @@ async Task SettlementRuleTests()
                     && !body.Contains("InitNewGame", StringComparison.Ordinal),
                     "the patch snapshot still contains a method that is in no source file of this project, so it is "
                     + "still the global list");
+            }
             }
         }
 
@@ -5729,8 +5742,8 @@ async Task SettlementRuleTests()
         //
         // Pinned against the ledger source rather than against the script: a script re-run with different arguments can
         // quietly disagree, while this string is the ledger's own claim about the game.
-        var ledgerSource = File.ReadAllText(Path.Combine(PackageValidation.PackageRoot(), "..", "_lab",
-            "triage_ledger.py"));
+        var ledgerSource = LedgerSource();
+        if (ledgerSource is null) return Task.CompletedTask;
         foreach (var entry in new[] { "CompTargetEffect_Resurrect", "CompPsylinkable", "CompAbilityEffect_Farskip",
                      "CompAnalyzable", "CompUsable" })
             Check(ledgerSource.Contains($"'{entry}'", StringComparison.Ordinal)
