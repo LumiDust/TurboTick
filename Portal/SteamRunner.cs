@@ -182,7 +182,25 @@ internal static class SteamCmdRunner
     /// </summary>
     private static class AuthLog
     {
-        private static string Path_ => System.IO.Path.Combine(steamRoot, ".local", "share", "Steam", "logs", "connection_log.txt");
+        // Where steamcmd actually writes depends on its build: the bundled linux32 client uses
+        // `<HOME>/Steam/logs/connection_log.txt`, older packages used `<HOME>/.local/share/Steam/logs/…`.
+        // Reading only the second path made a completed Steam Guard approval invisible: the token was issued and
+        // stored, and the page still sat on "请在手机 Steam App 上批准" until the ten-minute deadline.
+        private static string Path_
+        {
+            get
+            {
+                string[] candidates =
+                [
+                    System.IO.Path.Combine(steamRoot, "Steam", "logs", "connection_log.txt"),
+                    System.IO.Path.Combine(steamRoot, ".local", "share", "Steam", "logs", "connection_log.txt"),
+                    System.IO.Path.Combine(steamRoot, "home", "Steam", "logs", "connection_log.txt"),
+                ];
+                foreach (var candidate in candidates)
+                    if (File.Exists(candidate)) return candidate;
+                return candidates[0];
+            }
+        }
 
         internal static long Length()
         {

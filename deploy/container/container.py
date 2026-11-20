@@ -163,9 +163,14 @@ def profile(root, version=None):
     if not config.is_file():
         fail(f"profile configuration missing: {config}; run install first")
     mods = [n.text.strip().lower() for n in xml(config).findall("activeMods/li") if n.text]
+    # Presence only. The save's own modIds order is the authority for load order (SaveModsSync writes the config
+    # from it), and a client config that lists Harmony before Core is still a valid RimWorld config. Enforcing a
+    # fixed order here rejected exactly the config the save asked for.
     required = ("ludeon.rimworld", "brrainz.harmony", "lumidust.turbotick")
-    if not all(name in mods for name in required) or [mods.index(n) for n in required if n in mods] != sorted(mods.index(n) for n in required if n in mods):
-        fail(f"{config} must enable Core, Harmony, TurboTick in that order; existing config was retained, edit it explicitly")
+    missing = [name for name in required if name not in mods]
+    if missing:
+        fail(f"{config} must enable Core, Harmony and TurboTick; missing: " + ", ".join(missing)
+             + "; existing config was retained, edit it explicitly")
 
 
 def replace_tree(source, target):
