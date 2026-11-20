@@ -112,6 +112,8 @@ services:
       disable: true
     environment:
       TURBOTICK_UPDATE_CHECK_SECONDS: "${TURBOTICK_UPDATE_CHECK_SECONDS:-3600}"
+      # The watcher must compare against the branch the installer used, not the dump's first build id.
+      TURBOTICK_GAME_BRANCH: "${TURBOTICK_GAME_BRANCH:-unstable}"
       HTTP_PROXY: "${INSTALL_HTTP_PROXY:-}"
       HTTPS_PROXY: "${INSTALL_HTTPS_PROXY:-}"
       ALL_PROXY: "${INSTALL_ALL_PROXY:-}"

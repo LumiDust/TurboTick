@@ -68,7 +68,7 @@ check_update() {
     log 'SteamCMD reported an error while reading app 294100; recorded as unavailable'
     return 1
   fi
-  helper update-status "$GAME" "$transcript" "$STATE"
+  helper update-status "$GAME" "$transcript" "$STATE" "${TURBOTICK_GAME_BRANCH:-unstable}"
   rm -f -- "$transcript"
 }
 

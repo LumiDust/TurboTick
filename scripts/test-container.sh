@@ -225,6 +225,48 @@ docker run --rm "${base[@]}" "${ro[@]}" --entrypoint python3 "$image" /opt/turbo
 admin <<'CHECK'
 python3 -c "import json;d=json.load(open('/state/game-update.json'));assert d['status']=='ok' and d['reason'] is None, d"
 CHECK
+# Steam's dump lists a build id per branch and `public` comes first; an unstable server must not compare
+# against it. The transcript below is shaped like a real `app_info_print 294100` excerpt.
+admin <<'FIXTURE'
+set -euo pipefail
+cat > /state/transcript.txt <<'DUMP'
+"294100"
+{
+	"depots"
+	{
+		"branches"
+		{
+			"public"
+			{
+				"buildid"		"23969874"
+			}
+			"unstable"
+			{
+				"buildid"		"26793372"
+				"description"		"Public testing"
+			}
+		}
+	}
+}
+DUMP
+FIXTURE
+docker run --rm "${base[@]}" "${ro[@]}" --entrypoint python3 "$image" /opt/turbotick/container.py update-status /game /state/transcript.txt /state unstable >/dev/null
+admin <<'CHECK'
+set -euo pipefail
+python3 - <<'INNER'
+import json
+status = json.load(open('/state/game-update.json'))
+assert status['latestBuildId'] == 26793372, status
+assert status['branch'] == 'unstable', status
+INNER
+CHECK
+docker run --rm "${base[@]}" "${ro[@]}" --entrypoint python3 "$image" /opt/turbotick/container.py update-status /game /state/transcript.txt /state public >/dev/null
+admin <<'CHECK'
+set -euo pipefail
+python3 -c "import json;d=json.load(open('/state/game-update.json'));assert d['latestBuildId']==23969874,d"
+CHECK
+pass 'the update check reads the branch the installer used, not the first build id in the dump'
+
 pass 'update status records the checked build, notices a new one, and a failed check keeps the old data'
 
 docker run -d --name "$running" --init --stop-timeout 90 "${base[@]}" "${ro[@]}" "$image" run >/dev/null

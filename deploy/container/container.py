@@ -215,6 +215,24 @@ def build_id(text):
     return int(match.group(1)) if match else None
 
 
+def branch_build_id(text, branch):
+    """`app_info_print` lists one build id per branch, and the first one in the dump belongs to `public`.
+
+    A server that installs `unstable` therefore compared its own build against the public one: right after an
+    update it kept reporting `needsUpdate` forever. Read the branch the installer actually used, and fall back
+    to `public` (then to the first id) only when the dump does not name it.
+    """
+    for wanted in [branch, "public"]:
+        if not wanted:
+            continue
+        section = re.search(r'"branches"\s*\{(.*?)\n\t\t\}', text, re.S)
+        body = section.group(1) if section else text
+        match = re.search(r'"%s"\s*\{[^}]*?"buildid"\s+"(\d+)"' % re.escape(wanted), body)
+        if match:
+            return int(match.group(1))
+    return build_id(text)
+
+
 def installed_build(game):
     """Only a Steam-installed tree carries an appmanifest; a copied tree does not, and saying so is
     more useful than guessing a build id from `Version.txt` (5011 is the game's own revision, not Steam's)."""
@@ -227,9 +245,9 @@ def installed_build(game):
         return None
 
 
-def update_status(game, transcript, state):
+def update_status(game, transcript, state, branch=None):
     version = game_layout(game)
-    latest = build_id(transcript.read_text(encoding="utf-8", errors="replace"))
+    latest = branch_build_id(transcript.read_text(encoding="utf-8", errors="replace"), branch)
     if latest is None:
         fail("the SteamCMD transcript contains no build id; the update check is inconclusive")
     current = installed_build(game)
@@ -252,6 +270,7 @@ def update_status(game, transcript, state):
         "reason": None,
         "installedVersion": version,
         "installedBuildId": current,
+        "branch": branch,
         "latestBuildId": latest,
         "needsUpdate": None if current is None else latest != current,
         "newBuildSinceLastCheck": previous_latest is not None and previous_latest != latest,
@@ -262,9 +281,9 @@ def update_status(game, transcript, state):
     state.mkdir(parents=True, exist_ok=True)
     record.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if current is None:
-        print(f"[update] RimWorld {version}: installed build id unknown (no steamapps manifest); latest Steam build {latest}")
+        print(f"[update] RimWorld {version} ({branch or 'first build in dump'}): installed build id unknown (no steamapps manifest); latest Steam build {latest}")
     else:
-        print(f"[update] RimWorld {version}: installed build {current}, latest Steam build {latest}, needsUpdate={payload['needsUpdate']}")
+        print(f"[update] RimWorld {version} ({branch or 'first build in dump'}): installed build {current}, latest Steam build {latest}, needsUpdate={payload['needsUpdate']}")
     if payload["newBuildSinceLastCheck"]:
         print(f"[update] Steam published a new build ({previous_latest} -> {latest}); run install --user ACCOUNT to update")
 
@@ -342,7 +361,7 @@ def main():
         health(paths[0])
     elif command == "update-status":
         game, transcript, state = paths
-        update_status(game, transcript, state)
+        update_status(game, transcript, state, args[3] if len(args) > 3 else None)
     elif command == "update-failed":
         state, reason = paths[0], args[1]
         update_failure(state, reason, paths[2] if len(paths) > 2 else None)
