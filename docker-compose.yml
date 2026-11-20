@@ -2,8 +2,8 @@ name: turbotick-headless
 
 services:
   headless:
-    # Pin the release you validated, or point this at a locally built tag (`-t turbotick-headless:0.7.1`).
-    image: ${TURBOTICK_IMAGE:-ghcr.io/lumidust/turbotick-headless:0.7.1}
+    # Pin the release you validated, or point this at a locally built tag (`-t turbotick-headless:0.7.2`).
+    image: ${TURBOTICK_IMAGE:-ghcr.io/lumidust/turbotick-headless:0.7.2}
     platform: linux/amd64
     user: "${TURBOTICK_UID:-10001}:${TURBOTICK_GID:-10001}"
     command: ["run"]
@@ -45,8 +45,8 @@ services:
           create_host_path: false
 
   installer:
-    # Pin the release you validated, or point this at a locally built tag (`-t turbotick-headless:0.7.1`).
-    image: ${TURBOTICK_IMAGE:-ghcr.io/lumidust/turbotick-headless:0.7.1}
+    # Pin the release you validated, or point this at a locally built tag (`-t turbotick-headless:0.7.2`).
+    image: ${TURBOTICK_IMAGE:-ghcr.io/lumidust/turbotick-headless:0.7.2}
     platform: linux/amd64
     user: "${TURBOTICK_UID:-10001}:${TURBOTICK_GID:-10001}"
     profiles: ["setup"]
@@ -96,7 +96,7 @@ services:
   # file you can read instead of a memory you have to keep. It never takes the deployment lock and never
   # touches the game directory.
   update-check:
-    image: ${TURBOTICK_IMAGE:-ghcr.io/lumidust/turbotick-headless:0.7.1}
+    image: ${TURBOTICK_IMAGE:-ghcr.io/lumidust/turbotick-headless:0.7.2}
     platform: linux/amd64
     user: "${TURBOTICK_UID:-10001}:${TURBOTICK_GID:-10001}"
     profiles: ["watch"]

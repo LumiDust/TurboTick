@@ -1,8 +1,8 @@
 # TurboTick headless 专服部署
 
-## 0.7.1：镜像就是部署单位
+## 0.7.2：镜像就是部署单位
 
-0.7.1 的**服务端**以 **`ghcr.io/lumidust/turbotick-headless:0.7.1`（linux/amd64）** 为发布单位，容器里跑的是
+0.7.2 的**服务端**以 **`ghcr.io/lumidust/turbotick-headless:0.7.2`（linux/amd64）** 为发布单位，容器里跑的是
 加载真实 RimWorld 的权威副本：世界在服务端推进，玩家端的副本按状态通道逐项跟随。**玩家端不从这里安装**——
 客户端 Mod 走 [Steam 创意工坊](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013)，订阅由 Steam 更新。
 容器侧的变量表、`installer`/`run` 两个阶段与镜像内文件清单见 **[deploy/container/README.md](container/README.md)**；
@@ -12,8 +12,8 @@
 
 - 镜像由发布流水线用**同一份客户端 Mod zip** 做 payload，不另行编译；`run` 启动前逐文件校验已安装的
   TurboTick 与镜像内容，缺失/改动/多余都要求停服重装。
-- 宿主变量 `TURBOTICK_IMAGE` 可指向本地构建标签（`docker build -t turbotick-headless:0.7.1 .`），
-  仓库根 `docker-compose.yml` 默认已是 `0.7.1`。
+- 宿主变量 `TURBOTICK_IMAGE` 可指向本地构建标签（`docker build -t turbotick-headless:0.7.2 .`），
+  仓库根 `docker-compose.yml` 默认已是 `0.7.2`。
 - 旧仓库内的 `docker/` 目录（0.6.0 预览时代的 Dockerfile/compose/入口）已从版本库移除，
   现在只有根 `Dockerfile` + `deploy/container/` 一套入口。
 
@@ -25,13 +25,13 @@
 
 ## 选择下载与部署方式
 
-从 [0.7.1 Release](https://github.com/LumiDust/TurboTick/releases/tag/v0.7.1) 下载并保存原包及 `SHA256SUMS`：
+从 [0.7.2 Release](https://github.com/LumiDust/TurboTick/releases/tag/v0.7.2) 下载并保存原包及 `SHA256SUMS`：
 
 | 下载项 | 使用者与内容 |
 |---|---|
-| `TurboTick-0.7.1-mod-1.7.zip` | 所有玩家；完整 `TurboTick/`，解压到各自游戏 `Mods` |
-| `TurboTick-0.7.1-headless-installer.zip` | 服主；同字节的 `TurboTick/`、`scripts/steamcmd/`、`docker-compose.yml`、`.env.example`、`deploy/container/`、本说明、systemd 模板及许可证 |
-| `ghcr.io/lumidust/turbotick-headless:0.7.1` | Docker headless 镜像，仅 **linux/amd64** |
+| `TurboTick-0.7.2-mod-1.7.zip` | 所有玩家；完整 `TurboTick/`，解压到各自游戏 `Mods` |
+| `TurboTick-0.7.2-headless-installer.zip` | 服主；同字节的 `TurboTick/`、`scripts/steamcmd/`、`docker-compose.yml`、`.env.example`、`deploy/container/`、本说明、systemd 模板及许可证 |
+| `ghcr.io/lumidust/turbotick-headless:0.7.2` | Docker headless 镜像，仅 **linux/amd64** |
 
 部署附件不含 Dockerfile 或用于构建镜像的 `artifacts/container-mod` 输入目录，也不含游戏、Harmony、账号缓存、密码、存档或日志；使用已发布镜像无需本地构建。镜像打包 Ubuntu 系统依赖、SteamCMD bootstrap、容器入口和该 Release 的同字节 TurboTick Mod，安装阶段另行下载游戏与 Harmony。游戏及 Harmony 也不嵌入 Mod 附件。
 
@@ -73,9 +73,9 @@ docker compose version
 把 headless 附件及校验文件放到服务器后校验；`SHA256SUMS` 同时列出其他附件时，只校验已下载的附件条目：
 
 ```bash
-grep '  TurboTick-0.7.1-headless-installer.zip$' SHA256SUMS | sha256sum -c -
+grep '  TurboTick-0.7.2-headless-installer.zip$' SHA256SUMS | sha256sum -c -
 sudo install -d -m 0755 /srv/turbotick
-sudo unzip TurboTick-0.7.1-headless-installer.zip -d /srv/turbotick
+sudo unzip TurboTick-0.7.2-headless-installer.zip -d /srv/turbotick
 sudo chown -R "$(id -u):$(id -g)" /srv/turbotick
 cd /srv/turbotick
 mkdir -p data/game data/profile data/state data/steam-cache backups secrets
@@ -96,7 +96,7 @@ cp .env.example .env
 
 游戏只读不影响日常存档与检查点，它们写入 profile/state。两个实例各用独立四目录；setup 与 run 通过共享 deployment 锁互斥，安装、更新和运行不可并行。先正常停止 headless，再运行 installer；让 installer 退出后再启动 headless。
 
-Compose 中 installer 与 headless 均固定镜像 `ghcr.io/lumidust/turbotick-headless:0.7.1`。编辑 `.env` 中的以下配置；镜像更新时两个模块必须同时使用同一 image 引用：
+Compose 中 installer 与 headless 均固定镜像 `ghcr.io/lumidust/turbotick-headless:0.7.2`。编辑 `.env` 中的以下配置；镜像更新时两个模块必须同时使用同一 image 引用：
 
 ```dotenv
 TURBOTICK_UID=10001
@@ -127,12 +127,12 @@ docker compose --profile setup run --rm installer --help
 
 ```bash
 # 有出口的机器
-docker pull ghcr.io/lumidust/turbotick-headless:0.7.1
-docker save ghcr.io/lumidust/turbotick-headless:0.7.1 | gzip -1 > turbotick-0.7.1.tar.gz
+docker pull ghcr.io/lumidust/turbotick-headless:0.7.2
+docker save ghcr.io/lumidust/turbotick-headless:0.7.2 | gzip -1 > turbotick-0.7.2.tar.gz
 
 # 目标主机
-gunzip -c turbotick-0.7.1.tar.gz | docker load
-docker image inspect ghcr.io/lumidust/turbotick-headless:0.7.1 --format '{{.Id}}'   # 应与来源机一致
+gunzip -c turbotick-0.7.2.tar.gz | docker load
+docker image inspect ghcr.io/lumidust/turbotick-headless:0.7.2 --format '{{.Id}}'   # 应与来源机一致
 ```
 
 标签已在本地时 Compose 不会重复拉取（默认 `pull_policy: missing`）；要彻底禁止联网拉取，在 `docker-compose.yml`
@@ -460,7 +460,7 @@ host、port、data、save、controller-only 也可用 `-turbotick-NAME=VALUE` �
 
 ### 停服备份并固定版本
 
-保留四类材料：原 Release Mod 与部署附件/`SHA256SUMS`、精确游戏 build 与完整 DLC/模组包、profile/state 整体、Compose/运行配置及镜像引用。Steam cache 和管理密码另行受控备份，不作为公开附件。镜像用 `:0.7.1` 固定标签，需要不可变引用时记录 digest，并在 Compose 或 image override 中为 installer/headless **同时**填写 `ghcr.io/lumidust/turbotick-headless@sha256:IMAGE_DIGEST`；当前 `.env` 只配置路径、身份、端口等，不改变 image 字段。
+保留四类材料：原 Release Mod 与部署附件/`SHA256SUMS`、精确游戏 build 与完整 DLC/模组包、profile/state 整体、Compose/运行配置及镜像引用。Steam cache 和管理密码另行受控备份，不作为公开附件。镜像用 `:0.7.2` 固定标签，需要不可变引用时记录 digest，并在 Compose 或 image override 中为 installer/headless **同时**填写 `ghcr.io/lumidust/turbotick-headless@sha256:IMAGE_DIGEST`；当前 `.env` 只配置路径、身份、端口等，不改变 image 字段。
 
 Docker 示例：
 
@@ -470,7 +470,7 @@ docker compose stop -t 90 headless
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 sudo tar --numeric-owner -czf "backups/turbotick-$STAMP.tar.gz" \
   data/game data/profile data/state docker-compose.yml .env
-docker image inspect ghcr.io/lumidust/turbotick-headless:0.7.1 \
+docker image inspect ghcr.io/lumidust/turbotick-headless:0.7.2 \
   --format '{{json .RepoDigests}}' > "backups/image-$STAMP.txt"
 ```
 

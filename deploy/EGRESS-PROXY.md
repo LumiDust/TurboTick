@@ -53,7 +53,7 @@
    ```bash
    curl -x http://172.17.0.1:17897 -o /dev/null -w '%{http_code}\n' \
         https://api.steampowered.com/ISteamWebAPIUtil/GetServerInfo/v1/     # 200
-   docker pull ghcr.io/lumidust/turbotick-headless:0.7.1                   # 成功，digest 可核对
+   docker pull ghcr.io/lumidust/turbotick-headless:0.7.2                   # 成功，digest 可核对
    docker logs --tail 3 turbotick-headless-update-check-1                  # 出现 (unstable) … latest Steam build …
    cat data/state/game-update.json                                         # status: ok
    ```

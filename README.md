@@ -3,7 +3,7 @@
 [![Build](https://github.com/LumiDust/TurboTick/actions/workflows/build.yml/badge.svg)](https://github.com/LumiDust/TurboTick/blob/main/.github/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**0.7.1 · RimWorld 1.7 · 网络协议 v5**
+**0.7.2 · RimWorld 1.7 · 网络协议 v5**
 
 共享殖民地联机 Mod。玩家端是**客户端 Mod**（Steam 创意工坊分发），服务端是**容器镜像**：镜像里跑一份加载真实
 RimWorld 的**权威副本**，世界在服务器上推进，玩家端副本按状态通道逐项跟随（小人、物品、世界物件、尸体追踪、
@@ -15,9 +15,9 @@ RimWorld 的**权威副本**，世界在服务器上推进，玩家端副本按�
 | 谁 | 从哪拿 | 说明 |
 |---|---|---|
 | **玩家** | [Steam 创意工坊 3834465013](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013) | 订阅即可，版本由 Steam 更新；**不要**手工塞 zip，否则容易和专服版本不一致 |
-| **服主** | `ghcr.io/lumidust/turbotick-headless:0.7.1`（linux/amd64） | 服务端镜像，**不含游戏本体**；游戏、Harmony、存档都在宿主卷里 |
-| 离线 / 固定版本 | Release 里的 `TurboTick-0.7.1-mod-1.7.zip` | 与镜像 payload **同字节**；只在不能连工坊（离线、锁版本、自建分发）时用 |
-| 无游戏本体的旧形态 | `TurboTick-0.7.1-coordinator-linux-x64` | 0.6.1–0.7.0 的协调器，供旧局或不装游戏的机器回退 |
+| **服主** | `ghcr.io/lumidust/turbotick-headless:0.7.2`（linux/amd64） | 服务端镜像，**不含游戏本体**；游戏、Harmony、存档都在宿主卷里 |
+| 离线 / 固定版本 | Release 里的 `TurboTick-0.7.2-mod-1.7.zip` | 与镜像 payload **同字节**；只在不能连工坊（离线、锁版本、自建分发）时用 |
+| 无游戏本体的旧形态 | `TurboTick-0.7.2-coordinator-linux-x64` | 0.6.1–0.7.0 的协调器，供旧局或不装游戏的机器回退 |
 
 一句话：**客户端走工坊，服务端走镜像**。Release 里的 `mod-1.7.zip` 是服务端 payload 与离线玩家的同一份字节，
 不是玩家的常规获取途径。
@@ -26,7 +26,7 @@ RimWorld 的**权威副本**，世界在服务器上推进，玩家端副本按�
 
 | 方案 | 模拟器数量 | 动画与寻路 | 需要同步的份数 |
 |---|---|---|---|
-| **权威副本 + 每端副本**（0.7.1 默认） | 1 个权威 + N 个副本 | 原生正确 | N 份状态差量 |
+| **权威副本 + 每端副本**（0.7.2 默认） | 1 个权威 + N 个副本 | 原生正确 | N 份状态差量 |
 | 协调器 + 每端模拟（0.6.1–0.7.0） | N | 原生正确 | N 份命令与回执 |
 
 镜像只装服务端软件：TurboTick payload、部署脚本、SteamCMD bootstrap。`/game` 在镜像内是**空目录**，
@@ -42,7 +42,7 @@ chown -R 10001:10001 /srv/turbotick/data
 
 # 1) 取部署文件（Release 里的 headless-installer.zip，或仓库根 docker-compose.yml + .env.example）
 cd /srv/turbotick
-unzip TurboTick-0.7.1-headless-installer.zip
+unzip TurboTick-0.7.2-headless-installer.zip
 cp .env.example .env          # 目录、端口、UID/GID、可选代理
 
 # 2) 校验配置
@@ -62,11 +62,11 @@ docker compose --profile watch up -d update-check
 - 游戏有新 build 时：停服 → `docker compose --profile setup run --rm installer install --user ACCOUNT` → 起服。
 - 换版本镜像：`TURBOTICK_IMAGE=ghcr.io/lumidust/turbotick-headless:<版本>` 后 `docker compose up -d headless`，
   payload 不一致会拒绝启动并提示重装。
-- 本地构建（无 ghcr 出口时）：`docker build -t turbotick-headless:0.7.1 .`，再把 `TURBOTICK_IMAGE` 指向该标签；
+- 本地构建（无 ghcr 出口时）：`docker build -t turbotick-headless:0.7.2 .`，再把 `TURBOTICK_IMAGE` 指向该标签；
   或者在有出口的机器 `docker save` 后到目标机 `docker load`，见 [deploy/README.md](deploy/README.md) 的「无外网出口时离线导入镜像」。
 - 完整变量表、目录权限、文件清单与回滚：见 [`deploy/container/README.md`](deploy/container/README.md)。
 
-协调器（旧形态，不需要游戏本体）：`deploy/turbotick-coordinator.service` + `TurboTick-0.7.1-coordinator-linux-x64`，
+协调器（旧形态，不需要游戏本体）：`deploy/turbotick-coordinator.service` + `TurboTick-0.7.2-coordinator-linux-x64`，
 参数见 `--help`。
 
 ## 客户端安装
