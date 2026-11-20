@@ -11,7 +11,21 @@ public sealed class DedicatedClient : IAsyncDisposable
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly SemaphoreSlim _speedGate = new(1, 1);
     private readonly object _stateSync = new();
+    /// <summary>The server's mod list, kept when the handshake was refused over a mod mismatch so a dialog can
+    /// show what to install and in what order. Null when the server did not send one.</summary>
+    private string? _serverMods;
+    /// <summary>The room's game build, sent beside the list so "版本不同" can name both values.</summary>
+    private string? _serverGameVersion;
+
+    /// <summary>Set when the last handshake was refused over a mod mismatch; cleared on the next successful one.</summary>
+    public string? ServerMods => Volatile.Read(ref _serverMods);
+
+    /// <summary>The build the room runs, as reported by the refusal or the Welcome. Null when unknown.</summary>
+    public string? ServerGameVersion => Volatile.Read(ref _serverGameVersion);
     private long _notificationGeneration;
+    /// <summary>Per-connection suppression window for player-visible refusals. Replaced on every connect so a new
+    /// room starts clean instead of inheriting the previous room's folded repeats.</summary>
+    private NoticeBudget _notices = new();
     private readonly Channel<Action> _notifications = Channel.CreateUnbounded<Action>(new UnboundedChannelOptions
     { SingleReader = true, SingleWriter = false });
     private readonly AsyncLocal<bool> _inNotification = new();
@@ -28,6 +42,9 @@ public sealed class DedicatedClient : IAsyncDisposable
     private int _disposed;
     private long _nextRequest;
     private long _playerId;
+    /// <summary>服务端发放的稳定身份（见 <see cref="SessionTokens"/>）。`PlayerId` 是会话内分配的 long，
+    /// 重连即变；这个 token 才是「还是同一个人」。null = 服务端没发（老服务端）。</summary>
+    private string? _playerToken;
     private IReadOnlyList<PlayerInfo> _players = Array.Empty<PlayerInfo>();
     private IReadOnlyList<PlayerPresence> _presences = Array.Empty<PlayerPresence>();
     private int _latencyMilliseconds = -1;
@@ -42,14 +59,69 @@ public sealed class DedicatedClient : IAsyncDisposable
     public event Action<int, SnapshotManifest>? CheckpointPublished;
     public event Action? CatchUpIncomplete;
     public event Action? CheckpointRequested;
+
+    /// <summary>Raised when the coordinator refuses something and no request was waiting for the answer.
+    ///
+    /// This is the player-facing half of a refusal. Every command the relay will not publish already comes back as
+    /// a structured `Error` frame; before this event that frame only completed a pending request, so a refused
+    /// command produced a server log line and nothing else. The event fires on the notification thread (the same
+    /// serialized path as <see cref="StatusChanged"/>), already rate limited by <see cref="PublishNotice"/>.</summary>
+    public event Action<ServerNotice>? NoticeReceived;
+    /// <summary>压缩帧解不开时触发。网络层不引用 Verse，所以不能直接写游戏日志。</summary>
+    public event Action<string>? FrameUnpackFailed;
+    /// <summary>基线下发开始：服务端把权威存档整份推过来。参数是 (<see cref="SessionInfo"/>, 存档清单, 存档名)。
+    /// 这是「客户端本地没有任何存档」时唯一的入口，所以它必须比 Started 更早到达，且早于任何帧。</summary>
+    public event Action<SessionInfo, SnapshotManifest, string>? BaselineStarted;
+    /// <summary>基线集齐并通过 sha256 校验：给的是本地文件路径。落盘/载入由游戏侧做（网络层不碰 Verse）。</summary>
+    public event Action<string, SnapshotManifest, SessionInfo>? BaselineReady;
+    /// <summary>基线失败（缺块、长度不符、sha256 不符、写盘失败）。带可直接显示给玩家的原因。</summary>
+    public event Action<string>? BaselineFailed;
+    /// <summary>服务端在执行恢复：把这个 token 上次留下的地图/选中/相机下发一次。
+    /// 没有记录时不会触发（新玩家、换了 token 的人停在默认视图）。游戏线程负责实际执行。</summary>
+    public event Action<SessionViewSnapshot>? ViewRestoreReceived;
     public SpeedPolicy? CurrentPolicy => Volatile.Read(ref _currentPolicy);
     public bool IsConnected => Volatile.Read(ref _connected) != 0;
+
+    /// <summary>Milliseconds since the server last sent anything, or -1 when there is no session.
+    ///
+    /// A half-closed TCP connection accepts writes without error: the kernel buffers them, no exception is raised,
+    /// and the far end is not reading. A write-side check therefore cannot detect it, so the read side has to be
+    /// watched instead.</summary>
+    /// <summary>Identity of the connection a command would travel on right now: session object, socket endpoint and
+    /// whether the socket still reports itself open. Two different values across one burst means the writes were
+    /// split between connections, which is the only explanation that fits "write completed, server saw nothing".</summary>
+    public string DescribeSession()
+    {
+        var session = Volatile.Read(ref _session);
+        if (session is null) return "no-session";
+        try
+        {
+            var connection = session.Connection;
+            return "sess=" + session.GetHashCode().ToString("x8", System.Globalization.CultureInfo.InvariantCulture)
+                + " remote=" + connection.Endpoint + " open=" + connection.IsOpen;
+        }
+        catch (Exception) { return "session-error"; }
+    }
+
+    public long MillisecondsSinceLastReceived
+    {
+        get
+        {
+            var session = Volatile.Read(ref _session);
+            if (session is null) return -1;
+            try { return Environment.TickCount64 - session.Connection.LastReceived; }
+            catch (Exception) { return -1; }
+        }
+    }
     public bool CanEdit => Volatile.Read(ref _canEdit) != 0;
     public bool IsCheckpointOwner => Volatile.Read(ref _checkpointOwner) != 0;
     /// <summary>Explicit server-confirmed room host, independent of editing and checkpoint duties.</summary>
     public bool IsHost => Volatile.Read(ref _isHost) != 0;
     public string Status => Volatile.Read(ref _status);
     public long PlayerId => Interlocked.Read(ref _playerId);
+    /// <summary>服务端在 `Welcome` 里下发的稳定身份 token；null 表示服务端没发（老服务端）。
+    /// 客户端应当把它写进 `<profile>\Config\TurboTick\player-token.txt`，下次握手带回来。</summary>
+    public string? PlayerToken => Volatile.Read(ref _playerToken);
     /// <summary>Immutable snapshots, safe to inspect on the game thread without subscribing to events.</summary>
     public IReadOnlyList<PlayerInfo> Players => Volatile.Read(ref _players);
     public IReadOnlyList<PlayerPresence> Presences => Volatile.Read(ref _presences);
@@ -67,8 +139,23 @@ public sealed class DedicatedClient : IAsyncDisposable
 
     public DedicatedClient() => _notificationTask = Task.Run(NotificationLoopAsync);
 
-    /// <summary>Returns only after the complete compatibility handshake and authoritative initial policy.</summary>
-    public async Task ConnectAsync(string host, int port, ClientHello hello, CancellationToken ct = default)
+    /// <summary>基线下发的落地目录（客户端传 <c>WorldFiles.Directory</c>）。为空时不接受基线推送——
+    /// 服务端自己的发布/仿真连接不需要这条路。</summary>
+    public DedicatedClient(string? baselineDirectory) : this() => _baselineDirectory = baselineDirectory;
+
+    private readonly string? _baselineDirectory;
+    private BaselineReceiver? _baseline;
+    private SessionInfo? _baselineSession;
+    private SnapshotManifest? _baselineManifest;
+    private int _baselineStage;
+
+    /// <summary>Returns only after the complete compatibility handshake and authoritative initial policy.
+    ///
+    /// <paramref name="playerToken"/> 是上次服务端发放的身份 token（读自
+    /// `<profile>\Config\TurboTick\player-token.txt`）。它放在最后一个可选参数上：已有的调用点全部不用改，
+    /// 不传就等于「新玩家」，服务端会发一个新的回来。</summary>
+    public async Task ConnectAsync(string host, int port, ClientHello hello, CancellationToken ct = default,
+        string? playerToken = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
         if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
@@ -82,6 +169,7 @@ public sealed class DedicatedClient : IAsyncDisposable
             lock (_stateSync)
             {
                 generation = ++_notificationGeneration;
+                Volatile.Write(ref _notices, new NoticeBudget());
                 SetStatus("Connecting", generation);
             }
             TcpClient? socket = new();
@@ -94,10 +182,26 @@ public sealed class DedicatedClient : IAsyncDisposable
                 timeout.CancelAfter(TimeSpan.FromSeconds(10));
                 await socket.ConnectAsync(host, port, timeout.Token).ConfigureAwait(false);
                 connection = new FramedConnection(socket);
-                await connection.WriteAsync(new WireMessage { Type = "Hello", Hello = hello }, timeout.Token).ConfigureAwait(false);
+                await connection.WriteAsync(new WireMessage
+                {
+                    Type = "Hello", Hello = hello,
+                    // 稳定身份：服务端据此认出「还是那个人」。缺失/不认识时服务端当新玩家并回一个新 token。
+                    PlayerToken = SessionTokens.IsValid(playerToken) ? playerToken : null
+                }, timeout.Token).ConfigureAwait(false);
                 var welcome = await connection.ReadAsync(timeout.Token).ConfigureAwait(false)
                     ?? throw new NetworkException("HandshakeClosed", "The server closed the connection before the handshake completed.");
-                if (welcome.Type == "Error") throw ServerError(welcome);
+                if (welcome.Type == "Error")
+                {
+                    // Keep the room's list before refusing. It arrives on the refusal itself, because `ServerMods` is
+                    // otherwise only written from Welcome - a message a refused join never receives. Measured: the
+                    // client then had nothing to show but a paragraph of prose naming no mod at all.
+                    if (welcome.Mods is { Length: > 0 })
+                    {
+                        Volatile.Write(ref _serverMods, welcome.Mods);
+                        Volatile.Write(ref _serverGameVersion, welcome.GameVersion);
+                    }
+                    throw ServerError(welcome);
+                }
                 if (welcome.Type != "Welcome" || welcome.Policy is null || welcome.CanEdit is null || welcome.IsHost is null ||
                     welcome.PlayerId <= 0 || !ValidPlayers(welcome.Players) ||
                     !welcome.Players!.Any(player => player.Id == welcome.PlayerId))
@@ -107,7 +211,17 @@ public sealed class DedicatedClient : IAsyncDisposable
                 if (!string.Equals(welcome.GameVersion, hello.GameVersion, StringComparison.Ordinal))
                     throw new NetworkException("GameVersionMismatch", "The server Welcome contains a different game version.");
                 if (!string.Equals(welcome.ModHash, hello.ModHash, StringComparison.Ordinal))
+                {
+                    // Keep the server's list before refusing: "hashes differ" is not something a player can act on,
+                    // but "you are missing these five, in this order" is. The dialogs read this afterwards.
+                    Volatile.Write(ref _serverMods, welcome.Mods);
+                    Volatile.Write(ref _serverGameVersion, welcome.GameVersion);
                     throw new NetworkException("ModHashMismatch", "The server Welcome contains a different simulation mod hash.");
+                }
+                // Joined cleanly: the previous refusal's list is stale now, and leaving it would show an old verdict
+                // table the next time a window asks.
+                Volatile.Write(ref _serverMods, null);
+                Volatile.Write(ref _serverGameVersion, null);
                 timeout.Token.ThrowIfCancellationRequested();
                 var session = new Session(this, connection, welcome.Policy.Revision, generation) { Epoch = welcome.Epoch };
                 lock (_stateSync)
@@ -118,6 +232,7 @@ public sealed class DedicatedClient : IAsyncDisposable
                     Volatile.Write(ref _checkpointOwner, welcome.CheckpointOwner == true ? 1 : 0);
                     Volatile.Write(ref _isHost, welcome.IsHost.Value ? 1 : 0);
                     Interlocked.Exchange(ref _playerId, welcome.PlayerId);
+                    Volatile.Write(ref _playerToken, welcome.PlayerToken);
                     Volatile.Write(ref _players, Array.AsReadOnly(welcome.Players!.ToArray()));
                     Volatile.Write(ref _presences, Array.Empty<PlayerPresence>());
                     Volatile.Write(ref _latencyMilliseconds, -1);
@@ -408,6 +523,20 @@ public sealed class DedicatedClient : IAsyncDisposable
         finally { Volatile.Write(ref session.PresenceWriteInFlight, 0); }
     }
 
+    /// <summary>上报「我在看什么」（地图 / 选中 / 相机）。
+    ///
+    /// fire-and-forget：它是**状态覆盖**，不是事件——丢一条，下一拍防抖窗口补上就是了。为它排队等回包只会
+    /// 把 500 ms 的防抖窗口再拉长一个 RTT，而服务端那边本来就是「覆盖写」。未连接时静默返回。</summary>
+    public async Task SendViewStateAsync(SessionViewSnapshot view)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+        var session = Volatile.Read(ref _session);
+        if (session is null || session.IsClosed || !IsConnected) return;
+        await session.Connection.WriteAsync(
+            new WireMessage { Type = "ViewState", View = SessionViewSnapshot.Sanitize(view) }, session.Token)
+            .ConfigureAwait(false);
+    }
+
     /// <summary>Lockstep pacing: tells the server how far this peer has actually simulated. Without it the
     /// timeline would run at the fastest machine's speed and the slowest would fall behind forever.</summary>
     public async Task ReportProgressAsync(int tick, CancellationToken ct = default)
@@ -453,6 +582,11 @@ public sealed class DedicatedClient : IAsyncDisposable
 
     private async Task DisconnectCoreAsync()
     {
+        // 断线时半截的基线文件必须收掉：句柄不释放会让下一次落盘撞上同一个 `.part`。
+        _baseline?.Dispose();
+        _baseline = null;
+        _baselinePath = null;
+        Interlocked.Exchange(ref _baselineStage, 0);
         Session? session;
         lock (_stateSync)
         {
@@ -614,12 +748,21 @@ public sealed class DedicatedClient : IAsyncDisposable
                         var started = message;
                         Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? "", started.SnapshotTick, started.Authoritative, started.RoomAuthoritative, started.Lockstep), started.Manifest!));
                         break;
+                    case "SaveStart":
+                        StartBaseline(message);
+                        break;
+                    case "SaveChunk":
+                        AcceptBaselineChunk(message);
+                        break;
                     case "Frame":
                         // Frames are coalesced state, not ordered events. Routing each one through the
                         // notification queue made the queue drain at game-frame rate while frames arrived
                         // at twice that, so the backlog grew without bound and the replica sat a constant
                         // ~2000 ticks (33 seconds) behind. Receive is thread-safe and keeps only the newest.
-                        if (message.Frame is { } frame) FrameReceived?.Invoke(frame);
+                        // 解压：FrameZip 与 Frame 互斥。解不开必须报出来——静默丢帧的副本看起来和"已同步"一模一样。
+        if (!FrameCodec.TryUnpack(message, out var unpacked, out var unpackError))
+            FrameUnpackFailed?.Invoke(unpackError ?? "unknown");
+        else if (unpacked.Frame is { } frame) FrameReceived?.Invoke(frame);
                         break;
                     case "Tick":
                         var tick = message.Tick;
@@ -632,6 +775,14 @@ public sealed class DedicatedClient : IAsyncDisposable
                         break;
                     case "CheckpointNeeded":
                         Publish(session, () => CheckpointRequested?.Invoke());
+                        break;
+                    case "ViewRestore":
+                        // 服务端只在 WorldReady 之后发一次，且只在有记录时发。
+                        if (message.View is { } restoreView)
+                        {
+                            var snapshot = SessionViewSnapshot.Sanitize(restoreView);
+                            Publish(session, () => ViewRestoreReceived?.Invoke(snapshot));
+                        }
                         break;
                     case "Checkpoint":
                         if (message.Manifest is not null) Validation.Manifest(message.Manifest);
@@ -664,8 +815,16 @@ public sealed class DedicatedClient : IAsyncDisposable
                         break;
                     case "Error":
                         var error = ServerError(message);
-                        if (session.Pending.TryGetValue(message.RequestId, out var pending)) pending.TrySetException(error);
+                        var awaited = false;
+                        if (message.RequestId > 0 && session.Pending.TryGetValue(message.RequestId, out var pending))
+                        {
+                            pending.TrySetException(error);
+                            awaited = true;
+                        }
                         if (message.Fatal) { reason = error.Message; return; }
+                        // Nobody was waiting on this frame. That is the refusal case - the answer to a command the
+                        // relay dropped - and it used to end here with no trace the player could see.
+                        if (!awaited) PublishNotice(session, message.Code, message.Message);
                         break;
                     default: throw new NetworkException("UnknownMessage", "The server sent an unsupported message.");
                 }
@@ -674,6 +833,130 @@ public sealed class DedicatedClient : IAsyncDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex) { reason = ex.Message; }
         finally { session.Close(reason); }
+    }
+
+    /// <summary>SaveStart：建立接收器。
+    ///
+    /// 清单先过 <see cref="Validation.Manifest"/>：一份坏清单会让客户端拼出「长度看着对、内容错」的存档，
+    /// 而那种存档要等到 LoadGame 之后才会以「画面错位」的形式暴露出来。</summary>
+    private void StartBaseline(WireMessage message)
+    {
+        // No directory means this client cannot hold a world at all - a pure ordering host, or a probe that only
+        // wanted to claim a role. Saying so once is required: the server has already committed 77 MB to the wire,
+        // and silence here looks exactly like "the baseline never arrived", which sends the next reader looking for
+        // a network fault that does not exist.
+        if (_baselineDirectory is null)
+        {
+            FailBaseline("客户端没有基线目录（DedicatedClient 构造时未提供），无法接收世界");
+            return;
+        }
+        try
+        {
+            if (message.Manifest is not { } manifest || string.IsNullOrEmpty(message.SaveId))
+                throw new InvalidDataException("基线缺少清单或内容 id。");
+            Validation.Manifest(manifest);
+            if (!string.Equals(manifest.Id, message.SaveId, StringComparison.Ordinal))
+                throw new InvalidDataException("基线内容 id 与清单不一致。");
+            if (message.SaveCount <= 0
+                || message.SaveCount != (int)((manifest.Length + NetworkProtocol.SaveChunkSize - 1) / NetworkProtocol.SaveChunkSize))
+                throw new InvalidDataException(
+                    $"基线块数与长度不匹配：{message.SaveCount} 块 × {NetworkProtocol.SaveChunkSize} 字节 != {manifest.Length} 字节");
+            var path = Path.Combine(_baselineDirectory, manifest.Id + ".baseline.rws.part");
+            Directory.CreateDirectory(_baselineDirectory);
+            _baseline?.Dispose();
+            _baseline = new BaselineReceiver(manifest.Id, manifest.Length, message.SaveCount, path);
+            _baselineManifest = manifest;
+            _baselineSession = new SessionInfo(message.Epoch, message.Tick, message.Seed, manifest.Id,
+                message.SnapshotTick, message.Authoritative, message.RoomAuthoritative, message.Lockstep);
+            _baselinePath = path;
+            Interlocked.Exchange(ref _baselineStage, 1);
+            BaselineStarted?.Invoke(_baselineSession, manifest, message.SaveName ?? manifest.Id[..16]);
+        }
+        catch (Exception error)
+        {
+            FailBaseline("基线下发无法开始：" + error.Message);
+        }
+    }
+
+    private string? _baselinePath;
+    private int _baselinePercent;
+
+    private void AcceptBaselineChunk(WireMessage message)
+    {
+        var receiver = _baseline;
+        // 没有 SaveStart 的块直接丢弃：这不是错误路径，只是「这条消息不属于当前会话」。
+        if (receiver is null) return;
+        if (message.SaveId is { Length: > 0 } id && !string.Equals(id, receiver.SaveId, StringComparison.Ordinal))
+        {
+            FailBaseline($"基线内容 id 变了：{id[..Math.Min(8, id.Length)]} != {receiver.SaveId[..Math.Min(8, receiver.SaveId.Length)]}");
+            return;
+        }
+        var result = receiver.Accept(message.SaveIndex, message.SaveBytes, out var chunkError);
+        if (result == BaselineReceiver.ChunkResult.Fatal) { FailBaseline(chunkError ?? "基线下发分块非法。"); return; }
+        if (result == BaselineReceiver.ChunkResult.Duplicate) return;
+        var percent = receiver.Percent;
+        if (percent >= _baselinePercent + 25 && percent < 100)
+        {
+            _baselinePercent = percent / 25 * 25;
+            // 进度要能被「载入花了多久」这个判据引用：没有它的日志里，18 MB 的静默和「卡死」无法区分。
+            Console.WriteLine($"[TurboTick] 基线下发 {percent}%：{receiver.ReceivedBytes / 1024} KiB / "
+                + $"{receiver.ReceivedChunks}/{receiver.ExpectedCount} 块");
+        }
+        if (receiver.ReceivedChunks != receiver.ExpectedCount) return;
+        var manifest = _baselineManifest;
+        var session = _baselineSession;
+        var path = _baselinePath;
+        _baseline = null;
+        var failure = receiver.Finish();
+        if (failure is not null) { FailBaseline(failure); return; }
+        if (manifest is null || session is null || path is null) { FailBaseline("基线状态丢失。"); return; }
+        // 这一行是验收判据：分块数、字节数、sha256 三者同时出现，才能和「收到一半就载入」区分开。
+        Console.WriteLine($"[TurboTick] 基线下发 100%：{receiver.ExpectedLength} 字节 / {receiver.ExpectedCount} 块，"
+            + $"sha256 校验通过 {manifest.Id[..16]}");
+        try
+        {
+            // .part 只是写盘中间态；改成 .rws 后由游戏侧复制进 Saves/ 再 LoadGame。
+            var final = path[..^".part".Length];
+            File.Move(path, final, overwrite: true);
+            _baselinePath = null;
+            Interlocked.Exchange(ref _baselineStage, 2);
+            BaselineReady?.Invoke(final, manifest, session);
+        }
+        catch (Exception error) { FailBaseline("基线落盘失败：" + error.Message); }
+    }
+
+    /// <summary>基线失败：清掉接收器与半截文件，并把原因交给游戏侧显示。
+    /// 半截文件必须删掉——留在磁盘上的 `.part` 下一次会被当成一份存档的候选。</summary>
+    private void FailBaseline(string reason)
+    {
+        _baseline?.Dispose();
+        _baseline = null;
+        Interlocked.Exchange(ref _baselineStage, 3);
+        var path = _baselinePath;
+        _baselinePath = null;
+        if (path is not null)
+            try { if (File.Exists(path)) File.Delete(path); } catch (Exception) { }
+        BaselineFailed?.Invoke(reason);
+    }
+
+    /// <summary>告诉服务端基线已载入、可以开始发帧。
+    ///
+    /// 单向发送：帧能不能来由服务端决定，客户端不该为这件事阻塞游戏线程。发送失败不走异常路径——
+    /// 连接断了会由心跳/读循环发现，届时客户端重新走一遍基线即可。</summary>
+    public async Task SendWorldReadyAsync(string saveId, long epoch, int loadedTick = 0, int nextThingId = 0)
+    {
+        var session = Volatile.Read(ref _session);
+        if (session is null) return;
+        try
+        {
+            await session.Connection.WriteAsync(new WireMessage
+            {
+                // Tick / NextThingId 是副本载入后的实际水位，权威端据此补齐「存档点 -> 载入完成」之间
+                // 新建/销毁的物体——增量帧永远不会再发它们。
+                Type = "WorldReady", SaveId = saveId, Epoch = epoch, Tick = loadedTick, NextThingId = nextThingId
+            }, session.Token).ConfigureAwait(false);
+        }
+        catch (Exception error) { SetStatus("WorldReady 发送失败：" + error.Message, Volatile.Read(ref _notificationGeneration)); }
     }
 
     private static void CompleteResponse(Session session, WireMessage message)
@@ -739,6 +1022,28 @@ public sealed class DedicatedClient : IAsyncDisposable
             if (session.Generation != Volatile.Read(ref _notificationGeneration) || session.IsClosed ||
                 !ReferenceEquals(Volatile.Read(ref _session), session)) return;
             try { action(); } catch (Exception) { }
+        });
+    }
+
+    /// <summary>Hands a refusal to the UI, at most once per code per window.
+    ///
+    /// Filtering happens here rather than in the UI so that what arrives at <see cref="NoticeReceived"/> is what a
+    /// player should be told, already folded: a refused burst arrives as one notice carrying the repeat count, not
+    /// as a wall of identical text.
+    /// </summary>
+    private void PublishNotice(Session session, string? code, string? message)
+    {
+        var handlers = NoticeReceived;
+        if (handlers is null) return;
+        var admission = Volatile.Read(ref _notices).Admit(code, Environment.TickCount64);
+        if (!admission.Show) return;
+        var notice = NoticeRules.Classify(code, message) with { Folded = admission.Suppressed };
+        Publish(session, () =>
+        {
+            foreach (Action<ServerNotice> handler in handlers.GetInvocationList())
+            {
+                try { handler(notice); } catch (Exception) { }
+            }
         });
     }
 
@@ -822,3 +1127,8 @@ public sealed class DedicatedClient : IAsyncDisposable
         internal void DisposeToken() => _lifetime.Dispose();
     }
 }
+
+
+
+
+

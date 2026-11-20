@@ -17,13 +17,18 @@ internal static class BackgroundRunPatch
     private static void Postfix()
     {
         var wanted = Sharing();
-        if (wanted == Application.runInBackground) return;
-        if (original is null || !wanted) original = Application.runInBackground;
-        Application.runInBackground = wanted;
-        if (wanted) return;
-        // Session ended: restore what the user actually selected.
-        if (original is { } restore) Application.runInBackground = restore;
-        original = null;
+        if (!wanted)
+        {
+            // Session ended: put back what the user actually selected. The old code reassigned `original`
+            // from the forced value before restoring, so a player who had RunInBackground off ended up with
+            // it permanently on after their first multiplayer session.
+            if (original is { } restore) Application.runInBackground = restore;
+            original = null;
+            return;
+        }
+        if (Application.runInBackground) return;
+        original ??= Application.runInBackground;
+        Application.runInBackground = true;
     }
 
     private static bool Sharing() =>

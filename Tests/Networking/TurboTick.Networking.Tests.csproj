@@ -9,4 +9,9 @@
   <ItemGroup>
     <ProjectReference Include="../../Networking/TurboTick.Networking.csproj" />
   </ItemGroup>
+  <!-- Trimmed slices of live steamcommunity browse pages: the parser is tested against the markup Steam actually
+       served, because the class names are content-hashed and a hand-written sample would prove nothing. -->
+  <ItemGroup>
+    <None Include="../Fixtures/*.html" Link="Fixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

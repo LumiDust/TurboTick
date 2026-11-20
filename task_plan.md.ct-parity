@@ -1,0 +1,69 @@
+# TurboTick 对齐 ColonyTogether v0.45（全套补齐）
+
+## 目标
+
+按 ColonyTogether v0.45（工坊 3825809806，`Rimworld.Multiplayer`）的做法，补齐 TurboTick 观看副本的缺失功能。
+**架构前提不变**：客户端不 tick（`Frozen`），服务端权威。CT 的 469 个补丁点全部工作在同一前提上，
+所以照搬其补丁形态是兼容的，不需要切到 `Predictive`。
+
+## 参考基线
+
+| 项 | 值 |
+|---|---|
+| 反编译 | `_lab/ct045/ct045.decompiled.cs`（381,999 行 / 14.3 MB） |
+| 补丁面 | 775 个 (类型,方法) / 469 个类型 |
+| 我方 | ~130 点 / 75 类型 |
+| 未覆盖清单 | `_lab/ct045_missing.txt`（421 个类型） |
+| 分析笔记 | `_lab/findings-ct045.md` |
+
+## 四个已定位的用户报错
+
+| # | 症状 | 根因 | CT 的解法 |
+|---|---|---|---|
+| 1 | 蓝图 Gizmo 崩溃 `ArgumentNullException(key)` | `Blueprint_Build.GetGizmos`:87 把 `def.entityDefToBuild`（null）传给 `BuildCopyCommand` → `FindAllowedDesignator(null)` → `Dictionary.ContainsKey(null)` | **不补丁这个崩溃**——靠 `GenericBlueprintRelay` 让客户端根本不造蓝图，从源头避免半残对象 |
+| 2 | 框选判断错误 | 无实现 | `GenericSelectionRestore.Restore()`：存活校验 + `GameMapContext` + 逐对象 `Select` |
+| 3 | 无法下达强制任务 | 无实现 | `GenericOrderedJobRelay`（`Pawn_JobTracker.TryTakeOrderedJob`）+ `NativePawnControlIntents` |
+| 4 | 受伤没有任何日志 | 只发 `summaryHealth.SummaryHealthPercent` 一个 float（`HeadlessRuntime.cs:1117`），无 hediff 列表 | `NativeHostCoverage.Actor.Hediffs`（`string[]`）+ `NativeHealthVisibility`（7 个访问器方法体 SHA-256 白名单 + `RequireOwner` 归属校验）后才读写私有 `Hediff.visible` |
+
+## 阶段
+
+### 阶段 A：受伤可见（hediff 列表同步）— 进行中
+
+原因：影响面最大（所有伤势/手术/疾病/疤痕），且不依赖 UI 通道。
+
+- [ ] A1 `ReplicaPawn` 增加 `Hediffs` 字段（`defName#part#severity` 编码）
+- [ ] A2 `HeadlessRuntime` 发送侧收集 `pawn.health.hediffSet.hediffs`
+- [ ] A3 `AuthoritativeReplica` 应用侧重建 hediff 列表
+- [ ] A4 单测：编码/解码往返 + 变更检测
+
+### 阶段 B：蓝图 Gizmo 崩溃
+
+- [ ] B1 定位副本上 `def.entityDefToBuild == null` 的确切来源（`ReplicaCreation.Def` 实际字符串）
+- [ ] B2 补丁 `Blueprint_Build.GetGizmos`：`entityDefToBuild` 为空时跳过 copy 命令并报一次
+- [ ] B3 单测：null `entityDefToBuild` 不抛
+
+### 阶段 C：强制任务转发
+
+- [ ] C1 客户端拦截 `Pawn_JobTracker.TryTakeOrderedJob`，编码为 `OrderCommand`
+- [ ] C2 权威端解码并执行（现有 `ApplyOrder` 是否已够用要核对）
+- [ ] C3 单测：往返
+
+### 阶段 D：框选同步
+
+- [ ] D1 客户端选择变化上报（id 列表）
+- [ ] D2 权威端广播，副本按 id 重建并做存活校验
+- [ ] D3 单测
+
+### 阶段 E：批量移植其余未覆盖域
+
+按 `_lab/ct045_missing.txt` 分批，每批 10-20 个类型，优先"玩家能点到"的。
+
+## 不做
+
+- **不切 `Predictive`**：实测 1/4 小人每帧超纠偏半径被拉回，表现为瞬移。CT 默认同样不走这条路（`NativeSimulationGate.AllowTick` 对 `role == "client"` 直接 `return false`）。
+- **不抄 CT 的版本指纹白名单**：那是为对抗第三方 mod 改游戏程序集设计的；我们只需要在已知版本上工作，过度校验只会让升级变成障碍。但**归属校验**（`RequireOwner` 那类）值得借——防止跨 pawn 写错对象。
+
+## 证据留存
+
+- `Player.log` 关键堆栈：`[Ref 3CAD3752]`（蓝图 Gizmo）、`[Ref 2D6F9B97]`（`Graphic_Random` 越界，已修）
+- 服务器：`root@192.168.0.29`，容器 `turbotick-server`

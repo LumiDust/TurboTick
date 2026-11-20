@@ -1,4 +1,4 @@
-param([string]$PackageDirectory, [string]$OutputDirectory)
+﻿param([string]$PackageDirectory, [string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 if (-not $PackageDirectory) { $PackageDirectory = $repo }

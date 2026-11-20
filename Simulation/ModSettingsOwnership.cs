@@ -30,4 +30,28 @@ public static class ModSettingsOwnership
     /// </summary>
     public static string Prefix(string packageId, Func<string, string> sanitize)
         => sanitize("Mod_" + packageId + "_");
+
+    /// <summary>Settings the deployment decides, not the player, and which the fingerprint must ignore on *both*
+    /// sides or no two machines can ever agree.
+    ///
+    /// Measured: `Mod_acutus.atmosphereoverhaul.release_AtmosphereOverhaulMod.xml` carrying
+    /// <c>weatherEngineV1=1</c> exists only on the server, because the container has to write it before launch -
+    /// AtmosphereOverhaul's default value selects its own WebGPU climate engine, which has no adapter in a
+    /// container and stops the world permanently. The client has the same mod with no such file, so hashing
+    /// config *files* made every join fail with a fingerprint mismatch that named nothing.
+    ///
+    /// The exclusion is by file name and is unconditional: a player who happens to have the file left over is
+    /// skipped as well, so the rule cannot depend on who wrote it last. The boundary is deliberate - this setting
+    /// chooses a weather *implementation*, and display replicas never run the simulation, so it cannot change
+    /// what the world does. A mod setting that genuinely feeds simulation must not be listed here.</summary>
+    public static bool IsDeploymentLocal(string fileName)
+    {
+        foreach (var suffix in DeploymentLocalSuffixes)
+            if (fileName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    /// <summary>Suffixes of <see cref="IsDeploymentLocal"/>. The folder name before the suffix varies between
+    /// installs (`atmosphereoverhaul.release` vs `AtmosphereOverhaul`), the settings class at the end does not.</summary>
+    private static readonly string[] DeploymentLocalSuffixes = ["_AtmosphereOverhaulMod.xml"];
 }

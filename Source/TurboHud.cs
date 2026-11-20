@@ -17,6 +17,7 @@ public static class TurboHud
     private static readonly Color Background = new(0.045f, 0.065f, 0.085f, 0.94f);
     private static readonly Color Border = new(0.20f, 0.29f, 0.35f, 0.95f);
     private static readonly Color Accent = new(0.35f, 0.85f, 0.77f);
+    private static readonly Color Caution = new(1f, 0.73f, 0.36f);
     private static readonly Color Muted = new(0.67f, 0.75f, 0.79f);
 
     private static bool Visible => TurboTickMod.Settings is { showHud: true } && Current.ProgramState == ProgramState.Playing &&
@@ -66,7 +67,15 @@ public static class TurboHud
             var panel = Panel;
             Widgets.DrawBoxSolidWithOutline(panel, Background, Border, 1);
             var connected = client?.IsConnected == true;
-            var statusColor = connected ? Accent : new Color(1f, 0.73f, 0.36f);
+            // Read here, once, so the badge, the status line and the tooltip can never disagree.
+            // `SyncReadout` rather than `Barrier.Backlog`: the room publishes deliberately ahead of the slowest peer,
+            // so the raw difference is non-zero while everything is fine.
+            var shared = SharedColony.Session;
+            // The lead is the room's, not a constant: at `Superfast` the server paces 36 ticks ahead so a 100 ms round
+            // trip fits, and comparing against the vanilla 6 would show 30 ticks of lag on a perfectly healthy peer.
+            var sync = SyncReadout.Of(shared.Barrier, RoomConnection.LockstepRoom,
+                NetworkProtocol.LeadTicksAt(NativeTickClock.Rate(TurboState.Authority.Current.TimeSpeed)));
+            var statusColor = !connected || RoomNotices.Recent ? Caution : Accent;
             Widgets.DrawBoxSolid(new Rect(panel.x, panel.y, 3, panel.height), statusColor);
             Widgets.DrawBoxSolid(new Rect(panel.x + 12, panel.y + 14, 6, 6), statusColor);
             var title = new Rect(panel.x + 24, panel.y + 6, panel.width - 120, 25);
@@ -105,10 +114,14 @@ public static class TurboHud
 
             Text.Font = GameFont.Tiny;
             var area = new Rect(panel.x + 12, panel.y + 41, panel.width - 24, panel.height - 49);
-            var shared = SharedColony.Session;
             var status = shared.Phase == SharedPhase.Faulted ? T("TurboTick_HudFaulted")
                 : shared.Phase is SharedPhase.LoadingWorld or SharedPhase.Synchronizing ? T("TurboTick_HudSyncing")
+                // A refusal outranks the phase line for its window: it is the answer to something the player just did.
+                : RoomNotices.Recent && shared.Phase == SharedPhase.Playing ? RoomNotices.HudText
                 : TurboState.Authority.IsHeld ? T("TurboTick_Held")
+                : shared.Phase == SharedPhase.Playing && sync.NeedsCheckpoint
+                    ? T("TurboTick_HudBehindCheckpoint", sync.LagTicks)
+                : shared.Phase == SharedPhase.Playing && sync.Behind ? T("TurboTick_HudBehind", sync.LagTicks)
                 : shared.Phase == SharedPhase.Playing ? T("TurboTick_HudSynced", shared.Barrier.AppliedTick)
                 : T("TurboTick_HudLobby");
             GUI.color = statusColor;
@@ -120,8 +133,10 @@ public static class TurboHud
                 "  ·  " + NativeSpeedSync.Label);
             Widgets.Label(new Rect(area.x, area.y + 44, area.width, 20),
                 T("TurboTick_HudTps", TurboState.MeasuredTps.ToString("0"), TurboState.TargetTps.ToString("0")));
-            TooltipHandler.TipRegion(new Rect(area.x, area.y, area.width, 65), RoomConnection.Status +
-                (shared.LastError is { Length: > 0 } error ? "\n" + error : ""));
+            TooltipHandler.TipRegion(new Rect(area.x, area.y, area.width, 65), RoomConnection.LiveStatus
+                + "\n" + T("TurboTick_HudTooltipSync", sync.ServerTick, sync.AppliedTick, sync.LagTicks)
+                + (RoomNotices.Recent ? "\n" + RoomNotices.HudText : "")
+                + (shared.LastError is { Length: > 0 } error ? "\n" + error : ""));
             Widgets.DrawLineHorizontal(area.x, area.y + 70, area.width, Border);
             GUI.color = Color.white;
             Widgets.Label(new Rect(area.x, area.y + 75, area.width, 20), T("TurboTick_HudPlayers"));
@@ -148,7 +163,7 @@ public static class TurboHud
                         Text.Anchor = TextAnchor.UpperRight;
                         Widgets.Label(new Rect(row.width - 58, row.y + 1, 54, 20), player.LatencyMilliseconds < 0 ? "…" : T("TurboTick_HudLatency", player.LatencyMilliseconds));
                         Text.Anchor = TextAnchor.UpperLeft;
-                        var role = T(player.IsHost ? "TurboTick_HudHost" : player.CanEdit ? "TurboTick_HudController" : "TurboTick_HudReadOnly");
+                        var role = T(player.CanEdit ? "TurboTick_HudCanCommand" : "TurboTick_HudViewOnly");
                         var presence = presences.FirstOrDefault(p => p.PlayerId == player.Id);
                         var detail = role + " · " + PlayerPresence.Status(player, presence);
                         Widgets.LabelEllipses(new Rect(13, row.y + 19, row.width - 17, 19), detail);
@@ -169,3 +184,4 @@ public static class TurboHud
             Event.current.Use();
     }
 }
+

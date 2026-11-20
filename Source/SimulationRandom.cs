@@ -20,6 +20,14 @@ internal static class SimulationRandom
     internal static bool Active => depth > 0;
     internal static void Validate() { _ = read; _ = write; }
     internal static ulong Capture() => depth > 0 || !initialized ? read() : state;
+
+    /// <summary>How many values have been drawn from the shared stream.
+    ///
+    /// <c>Rand.StateCompressed</c> is <c>seed | (iterations &lt;&lt; 32)</c> (<c>Verse/Rand.cs:94-104</c>), so the
+    /// captured state already carries the count - but only as a side effect. Exposing it makes the difference
+    /// legible: at tick 10260 the two peers had the same seed and differed by exactly 13 draws, which says one
+    /// peer ran a code path that drew from the stream and the other did not.</summary>
+    internal static uint Iterations() => (uint)(Capture() >> 32);
     internal static void Restore(ulong savedState)
     {
         if (depth != 0) throw new InvalidOperationException("Cannot replace RNG during a simulation transaction.");
@@ -59,3 +67,4 @@ internal static class SimulationRandom
         }
     }
 }
+

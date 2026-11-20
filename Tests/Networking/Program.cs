@@ -20,7 +20,10 @@ try
     });
 
     await AdminVerification.RunAsync(root, Check);
+    await AdminPortalVerification.RunAsync(root, Check);
+    await WorkshopVerification.RunAsync(root, Check);
     await HeadlessVerification.RunAsync(root, Check);
+    await ModManifestVerification.RunAsync(Check);
 
     await using var server = new DedicatedServer(new ServerOptions(Port: 0, DataDirectory: Path.Combine(root, "server")));
     await server.StartAsync();
@@ -36,6 +39,33 @@ try
         Assert(mismatch.Code == "ModHashMismatch" && !other.IsConnected, "Handshake reported TCP connection as joined.");
         await other.ConnectAsync("127.0.0.1", port, Hello());
         Assert(other.CurrentPolicy == server.CurrentPolicy, "Reused client did not receive initial policy.");
+    });
+
+    await Check("a refused handshake carries the room's mod list, and a mismatch never overwrites it", async () =>
+    {
+        // The room's list has to survive without a successful join behind it: the first peer to handshake is what
+        // describes the room, and that peer may well be the one being refused.
+        Assert(server.LockedMods is { Length: > 0 }, "The room never recorded a mod list.");
+        var room = ModManifest.Parse(server.LockedMods);
+        Assert(room.Count == 2, "The recorded list lost entries: " + room.Count);
+
+        await using var refused = new DedicatedClient();
+        var roomList = "0|ludeon.rimworld|0|1.7.5005|Core\n1|brrainz.harmony|2009463077|3.0.1|Harmony\n";
+        var victim = "0|ludeon.rimworld|0|1.7.5005|Core\n1|other.mod|999|0.0.1|Other\n";
+        var mismatch = await Throws<NetworkException>(() => refused.ConnectAsync("127.0.0.1", port,
+            Hello() with { ModHash = "different", Mods = victim }));
+        Assert(mismatch.Code == "ModHashMismatch", "Wrong refusal code: " + mismatch.Code);
+        // The refused peer must have received the room's list, not its own: rendering the reporter's list back at
+        // them would point at the wrong mods, which is worse than showing nothing.
+        Assert(refused.ServerMods == server.LockedMods,
+            "The refusal carried no list, so the client has nothing to render.");
+        Assert(refused.ServerMods!.Contains("brrainz.harmony") && !refused.ServerMods!.Contains("other.mod"),
+            "The refusal echoed the peer's own list instead of the room's.");
+        Assert(refused.ServerGameVersion is { Length: > 0 }, "The refusal did not name the room's build.");
+
+        // And the victim's list must not have replaced the room's.
+        Assert(server.LockedMods == roomList.TrimEnd('\n') || !server.LockedMods!.Contains("other.mod"),
+            "A mismatching peer overwrote the room's mod list.");
     });
 
     await Check("framing rejects bad lengths, malformed JSON and incompatible protocol with structured errors", async () =>
@@ -82,6 +112,55 @@ try
         Assert((await store.GetLatestAsync())?.Id == empty.Id, "Latest snapshot did not persist.");
         await Throws<ArgumentException>(() => store.ReadChunkAsync("../escape", 0));
         await Throws<ArgumentOutOfRangeException>(() => store.ReadChunkAsync(empty.Id, 0));
+    });
+
+    await Check("baseline receiver assembles chunks and rejects gaps, duplicates and sha mismatches", async () =>
+    {
+        static byte[] Pattern(int length, int seed)
+        {
+            var data = new byte[length];
+            for (var i = 0; i < length; i++) data[i] = (byte)((i * 31 + seed) & 0xFF);
+            return data;
+        }
+        static byte[] Slice(byte[] data, int index)
+        {
+            var offset = index * NetworkProtocol.SaveChunkSize;
+            return data[offset..Math.Min(data.Length, offset + NetworkProtocol.SaveChunkSize)];
+        }
+        var payload = Pattern(NetworkProtocol.SaveChunkSize * 2 + 1234, 7);
+        var chunks = 3;
+        var id = Convert.ToHexStringLower(SHA256.HashData(payload));
+
+        var path = Path.Combine(root, "baseline-ok.rws");
+        using (var receiver = new BaselineReceiver(id, payload.Length, chunks, path))
+        {
+            for (var index = 0; index < chunks; index++)
+                Assert(receiver.Accept(index, Slice(payload, index), out var error) == BaselineReceiver.ChunkResult.Accepted,
+                    "Baseline chunk was rejected: " + error);
+            Assert(receiver.Finish() is null, "An intact baseline failed sha256 verification.");
+        }
+        Assert(File.ReadAllBytes(path).SequenceEqual(payload), "Assembled baseline bytes differ from the pushed bytes.");
+
+        // 跳号在 TCP 上只能来自服务端漏发或协议错；少一块的存档一定会错位，所以必须致命。
+        using (var receiver = new BaselineReceiver(id, payload.Length, chunks, Path.Combine(root, "baseline-gap.rws")))
+        {
+            Assert(receiver.Accept(0, Slice(payload, 0), out _) == BaselineReceiver.ChunkResult.Accepted, "First chunk was rejected.");
+            Assert(receiver.Accept(2, Slice(payload, 2), out var gap) == BaselineReceiver.ChunkResult.Fatal && gap is not null,
+                "A chunk gap was not fatal.");
+            Assert(receiver.Accept(0, Slice(payload, 0), out _) == BaselineReceiver.ChunkResult.Duplicate,
+                "A duplicate chunk was not recognised as a duplicate.");
+            Assert(receiver.Finish() is { } incomplete && incomplete.Contains("不完整", StringComparison.Ordinal),
+                "An incomplete baseline did not report its chunk count.");
+        }
+
+        // 内容被改动时必须报错，而不是安静地载入一份不同的世界。
+        using (var receiver = new BaselineReceiver(new string('0', 64), payload.Length, chunks, Path.Combine(root, "baseline-bad.rws")))
+        {
+            for (var index = 0; index < chunks; index++) receiver.Accept(index, Slice(payload, index), out _);
+            Assert(receiver.Finish() is { } failure && failure.Contains("sha256", StringComparison.OrdinalIgnoreCase),
+                "A sha256 mismatch was not reported.");
+        }
+        await Task.CompletedTask;
     });
 
     await Check("cancel and resume verifies existing chunks and repairs corrupt partial data", async () =>
@@ -391,6 +470,33 @@ try
         finally { foreach (var peer in peers) peer.Dispose(); }
     });
 
+    await Check("a refusal nobody is waiting on reaches the player, folded", async () =>
+    {
+        await using var quiet = new DedicatedServer(new ServerOptions(Port: 0, DataDirectory: Path.Combine(root, "refusal")));
+        await quiet.StartAsync();
+        await using var peer = new DedicatedClient();
+        var notices = new List<ServerNotice>();
+        peer.NoticeReceived += notice => { lock (notices) notices.Add(notice); };
+        await peer.ConnectAsync("127.0.0.1", quiet.Port, Hello());
+        // No game runs in this harness, so every command is refused with NotPlaying. That refusal carries no request
+        // id, so before this it was parsed, found nothing to complete, and dropped: the coordinator logged it and the
+        // player saw nothing.
+        for (var i = 0; i < 4; i++) await peer.SendCommandAsync("designation", new byte[] { 1 });
+        await Until(() => { lock (notices) return notices.Count > 0; });
+        ServerNotice first;
+        lock (notices) first = notices[0];
+        Assert(first.Code == "NotPlaying" && first.IsCommandRefusal && first.Severity == NoticeSeverity.Information,
+            "the refusal did not reach the player: " + first.Code + "/" + first.Severity);
+        // A refused 25-cell drag is 25 identical frames; the player gets one, not twenty-five.
+        await Task.Delay(300);
+        lock (notices) Assert(notices.Count == 1, "identical refusals were not folded, saw " + notices.Count + " notices");
+        // Once the window passes the next one speaks and reports how many it stands for.
+        await Task.Delay((int)NoticeBudget.DefaultMinimumIntervalMilliseconds + 200);
+        await peer.SendCommandAsync("designation", new byte[] { 1 });
+        await Until(() => { lock (notices) return notices.Count >= 2; });
+        lock (notices) Assert(notices[1].Folded >= 1, "the folded count was not reported: " + notices[1].Folded);
+    });
+
     Console.WriteLine($"PASS: {passed} networking test groups.");
     return 0;
 }
@@ -405,7 +511,10 @@ async Task Check(string title, Func<Task> body)
     passed++;
     Console.WriteLine("PASS " + title);
 }
-static ClientHello Hello() => new("Verifier", "1.7.4910", "test-hash");
+// The handshake carries the room's active mod list as well as the hash. Both are needed: the hash decides whether the
+// peer may join, the list is what a refused peer is shown so it can fix the difference.
+static ClientHello Hello() => new("Verifier", "1.7.4910", "test-hash",
+    Mods: "0|ludeon.rimworld|0|1.7.5005|Core\n1|brrainz.harmony|2009463077|3.0.1|Harmony\n");
 static void Assert(bool condition, string message) { if (!condition) throw new Exception(message); }
 static async Task<T> Throws<T>(Func<Task> action) where T : Exception
 {
@@ -469,3 +578,6 @@ static async Task Eof(NetworkStream stream)
     var count = await stream.ReadAsync(new byte[1], timeout.Token);
     Assert(count == 0, "Server did not close the invalid connection.");
 }
+
+
+

@@ -1,4 +1,4 @@
-#Requires -Version 7.0
+﻿#Requires -Version 7.0
 param([string]$Dotnet = 'dotnet', [string]$RimWorldDir, [string]$Bash)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
@@ -36,8 +36,32 @@ function Reset-OutputDirectory([string]$Path) {
 }
 function Create-Package([string]$Directory, [string]$Path, [bool]$IncludeBase = $false) {
     if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
-    # Include dotfiles such as .env.example on Linux as well as Windows.
-    [IO.Compression.ZipFile]::CreateFromDirectory($Directory, $Path, [IO.Compression.CompressionLevel]::Optimal, $IncludeBase)
+    # Reproducible archives: `CreateFromDirectory` stamps every entry with the file's own mtime and its zip entry
+    # order follows directory enumeration, so two identical builds produced two different .zip hashes. A release
+    # that cannot be rebuilt byte-for-byte cannot be verified by anyone else, which is the whole point of the
+    # SHA256SUMS file. Entries are written in ordinal path order with a fixed timestamp instead.
+    $fixedTime = [DateTimeOffset]::new(2000, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+    $root = (Resolve-Path -LiteralPath $Directory).Path.TrimEnd('\', '/')
+    $files = Get-ChildItem -LiteralPath $root -Recurse -File |
+        ForEach-Object { $_.FullName.Substring($root.Length).TrimStart('\', '/').Replace('\', '/') } |
+        Sort-Object -Property @{ Expression = { $_ } } -CaseSensitive
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Create, [IO.FileAccess]::Write)
+    try {
+        $zip = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create, $true)
+        try {
+            foreach ($relative in $files) {
+                $source = Join-Path $root ($relative.Replace('/', [IO.Path]::DirectorySeparatorChar))
+                $entry = $zip.CreateEntry($(if ($IncludeBase) { "$(Split-Path -Leaf $root)/$relative" } else { $relative }),
+                    [IO.Compression.CompressionLevel]::Optimal)
+                $entry.LastWriteTime = $fixedTime
+                $input = [IO.File]::OpenRead($source)
+                try {
+                    $output = $entry.Open()
+                    try { $input.CopyTo($output) } finally { $output.Dispose() }
+                } finally { $input.Dispose() }
+            }
+        } finally { $zip.Dispose() }
+    } finally { $stream.Dispose() }
 }
 function Assert-Package([string]$Path, [string[]]$AllowedAssemblies) {
     $archive = [IO.Compression.ZipFile]::OpenRead($Path)

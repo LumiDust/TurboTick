@@ -25,7 +25,25 @@ internal static class SharedLightGrid
     /// <summary>True while this peer is inside the deterministic refresh and vanilla work must proceed.</summary>
     internal static bool Flushing => flushing;
 
+    /// <summary>Simulation work: everything below that decides state another rule reads back - power nets, pathing
+    /// regions, rooms, lord AI, areas, map/game/world components. It may only run inside the shared tick, so both
+    /// peers run it the same number of times for the same logical tick.</summary>
     internal static bool Gated => SharedColony.HasSharedWorld && !flushing;
+
+    /// <summary>Presentation work: the sky's sun angle and glow, the light grid derived from them, and the weather
+    /// ambience that vanilla also refreshes per frame. Vanilla drives all three from <see cref="Map.MapUpdate"/>.
+    ///
+    /// A display replica must keep computing them, because nothing else carries them. `Gated` froze them too (its
+    /// `flushing` window only opens inside `Flush()`, which is called from `DoSingleTick`, which a frozen replica
+    /// never reaches), and the result was a replica standing in the checkpoint's day forever - measured 2026-11-11:
+    /// 3000 frames / 50 s of live frames and the sky never moved. It was the most visible defect of the whole
+    /// display-replica path, and unlike the missing animation it has no other channel to arrive through.
+    ///
+    /// These are not simulation: on a frozen replica no rule runs at all, so nothing reads the values back. Weather
+    /// *selection* is deliberately not here - it happens in `WeatherDecider` on a tick, and the chosen definition,
+    /// its predecessor and the transition age arrive in the frame (`ReplicaWeather`), so a replica follows the host's
+    /// weather instead of inventing its own.</summary>
+    internal static bool PresentationGated => Gated && !AuthoritativeReplica.Frozen;
 
     /// <summary>Called once per shared tick, before anything reads light or asks the AI to decide. Both
     /// maps are walked in index order so the two peers do the same work in the same sequence.</summary>
@@ -66,19 +84,21 @@ internal static class SharedLightGrid
     }
 }
 
-/// <summary>Frame-driven sky refresh is skipped in a shared world; <see cref="SharedLightGrid.Flush"/>
-/// runs it on the tick instead.</summary>
+/// <summary>Frame-driven sky refresh is skipped in a shared world on a simulator; <see cref="SharedLightGrid.Flush"/>
+/// runs it on the tick instead. A display replica keeps vanilla's per-frame cadence (see
+/// <see cref="SharedLightGrid.PresentationGated"/>).</summary>
 [HarmonyPatch(typeof(SkyManager), nameof(SkyManager.SkyManagerUpdate))]
 internal static class SharedSkyCadence
 {
-    private static bool Prefix() => !SharedLightGrid.Gated;
+    private static bool Prefix() => !SharedLightGrid.PresentationGated;
 }
 
-/// <summary>Frame-driven light grid refresh is skipped in a shared world for the same reason.</summary>
+/// <summary>Frame-driven light grid refresh is skipped on a simulator for the same reason, and left alone on a
+/// display replica, whose sky is the only source of its light.</summary>
 [HarmonyPatch(typeof(GlowGrid), nameof(GlowGrid.GlowGridUpdate_First))]
 internal static class SharedGlowCadence
 {
-    private static bool Prefix() => !SharedLightGrid.Gated;
+    private static bool Prefix() => !SharedLightGrid.PresentationGated;
 }
 
 /// <summary>Power nets rebuilt per frame; the result feeds turrets and anything that reads power.</summary>
@@ -88,18 +108,27 @@ internal static class SharedPowerCadence
     private static bool Prefix() => !SharedLightGrid.Gated;
 }
 
-/// <summary>Pathfinding regions rebuilt per frame; a different rebuild timing yields different paths.</summary>
+/// <summary>Pathfinding regions rebuilt per frame; a different rebuild timing yields different paths.
+///
+/// <para>`PresentationGated`, not `Gated`: on a frozen display replica nothing else ever rebuilds them. `Gated` only
+/// opens its window inside <see cref="Flush"/>, which is called from <c>DoSingleTick</c> - and a replica never runs a
+/// tick (<c>SharedColony.TryBeginTick</c> returns false). Measured consequence: the client logged
+/// <c>Checking prison cell status of (134, 0, 107) which is not in or adjacent to a room</c> 138 times in one
+/// second while the player moved the mouse over a cell that *is* inside a room on the host, because
+/// <c>IntVec3.GetRoomOrAdjacent</c> resolves through this grid and every cell the frame had touched was still
+/// unassigned. The room lookup is a UI query, so it has to keep working on the replica.</para></summary>
 [HarmonyPatch(typeof(RegionGrid), nameof(RegionGrid.UpdateClean))]
 internal static class SharedRegionCadence
 {
-    private static bool Prefix() => !SharedLightGrid.Gated;
+    private static bool Prefix() => !SharedLightGrid.PresentationGated;
 }
 
-/// <summary>Rooms drive room stats, temperature and territory.</summary>
+/// <summary>Rooms drive room stats, temperature and territory - and, for the replica, every prison/outdoors question
+/// the float menu asks. Same predicate and same reason as <see cref="SharedRegionCadence"/>.</summary>
 [HarmonyPatch(typeof(RegionAndRoomUpdater), nameof(RegionAndRoomUpdater.TryRebuildDirtyRegionsAndRooms))]
 internal static class SharedRoomCadence
 {
-    private static bool Prefix() => !SharedLightGrid.Gated;
+    private static bool Prefix() => !SharedLightGrid.PresentationGated;
 }
 
 /// <summary>Lord decisions are group AI: a different number of updates per second changes what pawns do.</summary>
@@ -109,11 +138,14 @@ internal static class SharedLordCadence
     private static bool Prefix() => !SharedLightGrid.Gated;
 }
 
-/// <summary>Weather is a simulation input (rain, snow, temperature) even though vanilla drives it per frame.</summary>
+/// <summary>Weather is a simulation input (rain, snow, temperature) even though vanilla drives it per frame, so a
+/// simulator runs it on the tick. On a display replica the same call is the cross-fade only - which weather is
+/// current comes from the frame - and must keep running or the replica would never reach the weather the host
+/// chose.</summary>
 [HarmonyPatch(typeof(RimWorld.WeatherManager), nameof(RimWorld.WeatherManager.WeatherManagerUpdate))]
 internal static class SharedWeatherCadence
 {
-    private static bool Prefix() => !SharedLightGrid.Gated;
+    private static bool Prefix() => !SharedLightGrid.PresentationGated;
 }
 
 /// <summary>Areas feed allowed-area restrictions, which decide where pawns are permitted to walk.</summary>
@@ -194,7 +226,26 @@ internal static class SharedDeterminismGuard
 internal static class SharedGameClock
 {
     private static FieldInfo? ticksGame;
+    internal static int RewindsAccepted { get; private set; }
+    internal static int RewindsSkipped { get; private set; }
 
+    /// <summary>Moves the engine clock to the shared timeline, and moves the colony's "when" stamps with it.
+    ///
+    /// <para>A decreasing <c>TicksGame</c> used to be poisonous because nothing moved with it. Vanilla keeps absolute
+    /// ticks in dozens of places that are never revisited - <c>Job.startTick</c>, <c>Pawn_PathFollower.lastMovedTick</c>,
+    /// <c>lastEnteredCellTick</c>, hediff durations - and every consumer subtracts them from "now". Rewind the clock
+    /// alone and those stamps are in the future, so each subtraction yields a negative age and work stops for good.
+    /// Measured: <c>Price: job=LayDown 开始=100391 到期于=100390 当前=3702 时钟条款=不满足</c> - the job's own expiry
+    /// check (<c>Verse.AI/Pawn_JobTracker.cs:168</c>) can never be true again, while the pump itself was healthy
+    /// (<c>JobTrackerTick=285054 DriverTick=273948</c>).</para>
+    ///
+    /// <para><b>The first attempt at this fix refused the rewind instead</b>, which was worse: the barrier then stayed
+    /// below the engine clock, <c>CanAdvance</c> was false forever, and the world never ticked again
+    /// (<c>appliedTick=30000, serverTick=0, paused=True</c>). ColonyTogether solves it the other way around - accept the
+    /// correction and move the stamps (<c>ColonyClockRepair</c>,
+    /// <c>docs/mp-colonytogether/_decomp/ColonyTogether.Prototype.decompiled.cs:75928</c>, tolerance
+    /// <c>1000</c> at <c>:75930</c>, bulk shift at <c>:75990</c>). This follows that: a small drift is ignored, a
+    /// large one is applied together with <see cref="ClockStampShift"/>.</para></summary>
     internal static void Align(int logicalTick)
     {
         if (!SharedColony.HasSharedWorld) return;
@@ -204,12 +255,44 @@ internal static class SharedGameClock
         {
             ticksGame ??= AccessTools.Field(typeof(TickManager), "ticksGameInt");
             if (ticksGame is null) return;
-            if ((int)(ticksGame.GetValue(manager) ?? 0) == logicalTick) return;
+            var current = (int)(ticksGame.GetValue(manager) ?? 0);
+            if (current == logicalTick) return;
+            var delta = logicalTick - current;
+            if (delta < 0)
+            {
+                // Backwards: the correction is real (an older checkpoint), so accept it - but only if the stamps can go
+                // with it, otherwise the colony stops working. Below the tolerance the drift is left in place: moving
+                // hundreds of thousands of stamps to fix a few ticks of skew is the worse trade.
+                if (-delta < ClockStampShift.Tolerance) { ClockStampShift.NoteSmallDrift(); RewindsSkipped++; return; }
+                RewindsAccepted++;
+                if (RewindsAccepted <= 5)
+                    Log.Warning($"[TurboTick] 游戏时钟回拨 {current} → {logicalTick}（{-delta} tick）："
+                        + "所有 last*/startTick/spawnedTick 戳同步回拨，否则它们会落在未来、让工作与移动永久停止。");
+                ShiftColonyStamps(delta);
+            }
             ticksGame.SetValue(manager, logicalTick);
         }
         catch (Exception error)
         {
             Log.Warning("[TurboTick] 无法对齐游戏时钟：" + error.Message);
         }
+    }
+
+    /// <summary>Applies the same delta to every live object that can hold a stamp. `Game` is walked rather than the raw
+    /// object graph: it reaches maps, pawns, things and comps without crawling the whole heap.</summary>
+    private static void ShiftColonyStamps(int delta)
+    {
+        try
+        {
+            if (Current.Game is { } game) ClockStampShift.Shift(game, delta);
+            foreach (var map in Find.Maps) ClockStampShift.Shift(map, delta, maxDepth: 3);
+            foreach (var map in Find.Maps)
+                foreach (var pawn in map.mapPawns.AllPawnsSpawned)
+                {
+                    ClockStampShift.Shift(pawn.jobs, delta, maxDepth: 2);
+                    ClockStampShift.Shift(pawn.pather, delta, maxDepth: 1);
+                }
+        }
+        catch (Exception error) { Log.Warning("[TurboTick] 时钟戳平移失败：" + error.Message); }
     }
 }

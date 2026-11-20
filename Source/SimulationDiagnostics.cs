@@ -1,4 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
+using RimWorld;
 using Verse;
 
 namespace TurboTick;
@@ -57,7 +58,9 @@ internal static class SimulationDiagnostics
         {
             foreach (var thing in map.listerThings.AllThings.OrderBy(t => t.thingIDNumber))
             {
-                if (thing.def.category is ThingCategory.Mote or ThingCategory.Ethereal) continue;
+                if (thing.def.category == ThingCategory.Mote) continue;
+                // 蓝图是 Ethereal；跳过它会让「两端蓝图不一致」在诊断行里无法出现。
+                if (thing.def.category == ThingCategory.Ethereal && thing is not Blueprint) continue;
                 var pawn = thing as Pawn;
                 // A plant's HP is the one thing about it the hash covers, and it is only ever changed by
                 // rotting. Growth, age, unlit ticks and the light reading are what decide whether rotting
@@ -65,7 +68,7 @@ internal static class SimulationDiagnostics
                 var plant = thing as RimWorld.Plant;
                 rows.Add(new
                 {
-                    id = thing.thingIDNumber, def = thing.def.defName, map = map.Index,
+                    id = thing.thingIDNumber, def = thing.def.defName, map = map.uniqueID,
                     x = thing.Position.x, z = thing.Position.z, hp = thing.HitPoints,
                     job = pawn?.CurJobDef?.defName, health = pawn?.health?.summaryHealth?.SummaryHealthPercent,
                     growth = plant?.Growth, age = plant?.Age,
@@ -102,10 +105,12 @@ internal static class SimulationDiagnostics
         {
             foreach (var thing in map.listerThings.AllThings.OrderBy(t => t.thingIDNumber))
             {
-                if (thing.def.category is ThingCategory.Mote or ThingCategory.Ethereal) continue;
+                if (thing.def.category == ThingCategory.Mote) continue;
+                // 蓝图是 Ethereal；跳过它会让「两端蓝图不一致」在诊断行里无法出现。
+                if (thing.def.category == ThingCategory.Ethereal && thing is not Blueprint) continue;
                 var pawn = thing as Pawn;
                 rows.Add(new { id = thing.thingIDNumber, def = thing.def.defName,
-                    category = thing.def.category.ToString(), map = map.Index, x = thing.Position.x, z = thing.Position.z,
+                    category = thing.def.category.ToString(), map = map.uniqueID, x = thing.Position.x, z = thing.Position.z,
                     count = thing.stackCount, hp = thing.HitPoints, job = pawn?.CurJobDef?.defName,
                     health = pawn?.health?.summaryHealth?.SummaryHealthPercent });
             }

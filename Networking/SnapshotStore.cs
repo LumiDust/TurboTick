@@ -97,6 +97,23 @@ public sealed class SnapshotStore
         return new SnapshotChunk(id, index, data, hash);
     }
 
+    /// <summary>整份快照读进内存，供基线下发切片使用。
+    ///
+    /// 一次 18 MB：服务端把同一份存档推给每个新副本，切片比每次开流便宜；调用方按 id 缓存，
+    /// 房间换代时自然失效。读之前先校验长度与索引，避免把半截文件当成存档推出去。</summary>
+    public async Task<byte[]> ReadAllAsync(string id, CancellationToken ct = default)
+    {
+        var manifest = await GetManifestAsync(id, ct).ConfigureAwait(false);
+        var data = GC.AllocateUninitializedArray<byte>(checked((int)manifest.Length));
+        await using (var stream = new FileStream(BlobPath(id), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete,
+            64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            await stream.ReadExactlyAsync(data, ct).ConfigureAwait(false);
+        var hash = Convert.ToHexStringLower(SHA256.HashData(data));
+        if (!string.Equals(hash, manifest.Id, StringComparison.Ordinal))
+            throw new InvalidDataException("The stored snapshot failed SHA256 verification.");
+        return data;
+    }
+
     private async Task<SnapshotManifest> GetManifestAsync(string id, CancellationToken ct)
     {
         Validation.ContentId(id);

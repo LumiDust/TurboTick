@@ -29,6 +29,8 @@ internal static class AdminVerification
             Assert(populated.PlayerCount == 1 && populated.ModHash == "old-hash", "Admin status did not report the room.");
         });
         await check("archive reset preserves the full old running room, evicts old players, and permits a new compatible world across restart", () => VerifyResetAsync(root));
+        await check("an archive keeps only the snapshot store the room still references", () => VerifyArchiveSlimmingAsync(root));
+        await check("a room persisted for one save does not answer a launch that asks for another", () => VerifyStartupSaveAsync(root));
         await check("forged and replayed admin proofs fail and management never accepts player identity as authentication", () => VerifyProofsAsync(root));
         await check("admin authentication attempts are bounded and abandoned challenges time out", () => VerifyLimitsAsync(root));
         await check("archive preparation failure and invalid compatibility leave the running room intact", () => VerifyArchiveFailureAsync(root));
@@ -335,7 +337,10 @@ internal static class AdminVerification
         await waiting.ConnectAsync("127.0.0.1", server.Port, oldHello with { PlayerName = "Waiting joiner" });
         for (var i = 0; i < 205; i++) await host.SendCommandAsync("draft", new byte[] { 1 });
         await host.GetWorldManifestAsync(); // ordered socket barrier after all commands
-        await host.ReportHashAsync(1, new string('a', 64));
+        // A tick at or below the last stamped command is not comparable: the origin already applied the action while
+    // the other peers are still waiting for the agreed tick, so those ticks are skipped by design (see
+    // DedicatedServer._committedThroughTick). Report above the stamp to keep this test about the room, not the gate.
+    await host.ReportHashAsync(100, new string('a', 64));
         await host.GetWorldManifestAsync();
         Assert(server.HistoryCount == 205 && server.TrackedHashTicks == 1, "Old running room was not established.");
         await using var next = new DedicatedClient();
@@ -406,6 +411,205 @@ internal static class AdminVerification
             runningRestart.WorldManifest?.Id == SnapshotBuilder.Describe("a completely new colony"u8).Id, "Restart lost the new room or restored old work.");
     }
 
+    /// <summary>
+    /// A swap restarts the process with a different save name while the room on disk still describes the world that
+    /// was running before. Restored naively, that session answers "the world is already up", the load funnel stands
+    /// down and the requested save never opens: measured on the deployment, asking for 84a0f22c ran 8ee6381e.
+    /// </summary>
+    /// <summary>
+    /// Every reset and every automatic pack-change archival allocates a fresh snapshot store id and abandons the
+    /// previous one, but only the newest is ever read again. Copying all of them made an archive 5.1 GB while the
+    /// room it described was 148 MB, and 16 such archives reached 25 GB on a 469 GB disk. This pins the two rules that
+    /// stop it: the archive holds exactly the store the state file names, and old archives are pruned to a bound.
+    /// </summary>
+    private static async Task VerifyArchiveSlimmingAsync(string root)
+    {
+        var secret = Guid.NewGuid().ToString("N");
+        var hello = new ClientHello("Host", "1.7.4910", "slim-hash");
+        var bytes = RandomNumberGenerator.GetBytes(NetworkProtocol.SnapshotChunkSize + 11);
+        var world = SnapshotBuilder.Describe(bytes);
+        var directory = Path.Combine(root, "admin-archive-slim");
+        Directory.CreateDirectory(Path.Combine(directory, "RoomSnapshots"));
+        await using var server = new DedicatedServer(new ServerOptions(Port: 0, DataDirectory: directory,
+            GameVersion: hello.GameVersion, ModHash: hello.ModHash, AdminPassword: secret));
+        await server.StartAsync();
+        await using var admin = new DedicatedAdminClient();
+        await admin.ConnectAsync("127.0.0.1", server.Port, secret);
+
+        // A room only gets a store id once it has been reset, which is also the only time an archive is made in a
+        // long-lived deployment. Do the first reset so the second one has something to be slim about.
+        async Task PlayAsync()
+        {
+            await using var host = new DedicatedClient();
+            await host.ConnectAsync("127.0.0.1", server.Port, hello);
+            await host.ClaimHostAsync();
+            await host.UploadWorldAsync(world, new MemoryStream(bytes));
+            await host.StartGameAsync();
+        }
+
+        await PlayAsync();
+        var first = await admin.ResetRoomAsync(hello);
+        Assert(Directory.Exists(Path.Combine(directory, "Archives", first.BackupId)), "First reset made no archive.");
+        await PlayAsync();
+        // The state file is the authority for which store is live: that is the thing the archival path reads.
+        var liveState = JsonSerializer.Deserialize<JsonElement>(await File.ReadAllTextAsync(Path.Combine(directory, "server-state.json")));
+        var liveId = liveState.GetProperty("snapshotStoreId").GetString()
+            ?? throw new Exception("Reset did not persist a snapshot store id.");
+        // Debris from the room the first reset abandoned: real bytes under a directory nothing references.
+        var debris = Path.Combine(directory, "RoomSnapshots", new string('a', 32));
+        Directory.CreateDirectory(debris);
+        await File.WriteAllBytesAsync(Path.Combine(debris, new string('b', 64) + ".blob"), new byte[4096]);
+
+        var second = await admin.ResetRoomAsync(hello);
+        var archive = Path.Combine(directory, "Archives", second.BackupId);
+        var copies = Directory.EnumerateDirectories(Path.Combine(archive, "RoomSnapshots")).Select(Path.GetFileName).ToArray();
+        Assert(copies.Length == 1 && copies[0] == liveId,
+            "Archive copied snapshot stores the room no longer references: " + string.Join(",", copies));
+        var archivedStore = new SnapshotStore(Path.Combine(archive, "RoomSnapshots", liveId));
+        Assert((await archivedStore.GetLatestAsync())?.Id == world.Id, "Archived live store lost the world.");
+
+        // Pruning: five survive, the oldest goes. Names come from the generator, so they sort chronologically.
+        var archiveRoot = Path.Combine(directory, "Archives");
+        foreach (var stamp in new[] { "20200101T0000000000000Z-", "20200102T0000000000000Z-", "20200103T0000000000000Z-",
+                     "20200104T0000000000000Z-", "20200105T0000000000000Z-", "20200106T0000000000000Z-" })
+        {
+            var path = Path.Combine(archiveRoot, stamp + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(path);
+            await File.WriteAllTextAsync(Path.Combine(path, "archived.json"), stamp);
+        }
+        // A hand-made directory must not be pruned: it is not named like something we generate.
+        var manual = Path.Combine(archiveRoot, "my-own-backup");
+        Directory.CreateDirectory(manual);
+        await File.WriteAllTextAsync(Path.Combine(manual, "notes.txt"), "keep me");
+
+        // The room must hold a world for a pack change to be worth archiving: a room with no world simply adopts the
+        // new fingerprint (nothing is lost), which is the behaviour the empty-room case above already pinned.
+        await PlayAsync();
+        await server.StopAsync();
+        // Re-read: the second reset gave the room a fresh store, so the id captured before it is already retired.
+        var beforeStartup = JsonSerializer.Deserialize<JsonElement>(
+            await File.ReadAllTextAsync(Path.Combine(directory, "server-state.json")));
+        var liveAtStartup = beforeStartup.GetProperty("snapshotStoreId").GetString()
+            ?? throw new Exception("Reset did not persist a snapshot store id.");
+
+        await using (var restart = new DedicatedServer(new ServerOptions(Port: 0, DataDirectory: directory,
+            GameVersion: hello.GameVersion, ModHash: "changed-hash", AdminPassword: secret) { RequireSimulation = true }))
+            await restart.StartAsync();   // the pack changed, so startup archives and prunes once
+
+        var remaining = Directory.EnumerateDirectories(archiveRoot).Select(Path.GetFileName).ToArray();
+        Assert(remaining.Contains("my-own-backup"), "Pruning deleted a directory it did not generate.");
+        var generated = remaining.Where(name => name != "my-own-backup").ToArray();
+        Assert(generated.Length == 5, "Pruning kept " + generated.Length + " archives instead of 5: " + string.Join(",", generated));
+        // Match by prefix: a generated name is "<stamp>-<guid>", so an equality test could never hit.
+        Assert(!generated.Any(name => name!.StartsWith("20200101T0000000000000Z-", StringComparison.Ordinal)),
+            "Pruning kept the oldest archive: " + string.Join(",", generated));
+        Assert(generated.Any(name => name!.StartsWith("20200106T0000000000000Z-", StringComparison.Ordinal)),
+            "Pruning deleted the newest archive: " + string.Join(",", generated));
+
+        // The startup archive must carry the world it is protecting. It is made *before* the state is adopted, so
+        // anything that reads the live-store field at that moment reads null and copies no store at all.
+        var startupArchive = Directory.EnumerateDirectories(archiveRoot)
+            .Where(path => LooksGenerated(Path.GetFileName(path)!))
+            .OrderByDescending(path => Path.GetFileName(path)!, StringComparer.Ordinal)
+            .First();
+        var startupStores = Directory.Exists(Path.Combine(startupArchive, "RoomSnapshots"))
+            ? Directory.EnumerateDirectories(Path.Combine(startupArchive, "RoomSnapshots")).Select(Path.GetFileName).ToArray()
+            : [];
+        Assert(startupStores.Length == 1 && startupStores[0] == liveAtStartup,
+            "The startup archive kept no snapshot store for the world it protects: " + string.Join(",", startupStores)
+            + "（期望 " + liveAtStartup + "）");
+        Assert((await new SnapshotStore(Path.Combine(startupArchive, "RoomSnapshots", liveAtStartup)).GetLatestAsync())?.Id == world.Id,
+            "The startup archive's store lost the world.");
+
+        // The archived store was the last copy in the room; the process minted a fresh one, so the old one is now
+        // referenced by nothing. Left behind it accumulates one dead store per deploy — that is how RoomSnapshots
+        // reached 6.6 GB beside a 74 MB live store.
+        var storesLeft = Directory.EnumerateDirectories(Path.Combine(directory, "RoomSnapshots")).Select(Path.GetFileName).ToArray();
+        Assert(storesLeft.Length == 1 && storesLeft[0] != liveAtStartup,
+            "Unreferenced snapshot stores were left in the room: " + string.Join(",", storesLeft));
+    }
+
+    /// <summary>Same naming rule the server prunes by, so a test can tell its own directories from hand-made ones.</summary>
+    private static bool LooksGenerated(string name) =>
+        name.Length == 56 && name[8] == 'T' && name[22] == 'Z' && name[23] == '-' && name[24..].All(char.IsAsciiHexDigitLower);
+
+    private static async Task VerifyStartupSaveAsync(string root)
+    {
+        var secret = Guid.NewGuid().ToString("N");
+        var hello = new ClientHello("Host", "1.7.4910", "startup-hash");
+        var bytes = RandomNumberGenerator.GetBytes(NetworkProtocol.SnapshotChunkSize + 7);
+        var manifest = SnapshotBuilder.Describe(bytes);
+        var directory = Path.Combine(root, "admin-startup-save");
+        var runningBase = new ServerOptions(Port: 0, DataDirectory: directory, GameVersion: hello.GameVersion,
+            ModHash: hello.ModHash, AdminPassword: secret) { StartupSave = "save-a" };
+        await using (var server = new DedicatedServer(runningBase))
+        {
+            await server.StartAsync();
+            await using var host = new DedicatedClient();
+            await host.ConnectAsync("127.0.0.1", server.Port, hello);
+            await host.ClaimHostAsync();
+            await host.UploadWorldAsync(manifest, new MemoryStream(bytes));
+            await host.StartGameAsync();
+            Assert(server.GameRunning && server.WorldManifest?.Id == manifest.Id, "The room never started running.");
+        }
+        // Relaunching into the same save is a resume, not a swap: the funnel must stay down and keep the world.
+        await using (var resume = new DedicatedServer(runningBase))
+        {
+            await resume.StartAsync();
+            Assert(resume.GameRunning && resume.WorldManifest?.Id == manifest.Id && resume.Session?.Tick >= 0,
+                "Restarting into the room's own save lost it.");
+        }
+        // Asking for a different save drops the session so the load funnel can take the requested file. The snapshot
+        // stays on disk: it is the only copy of the checkpoint the operator may still want.
+        var secondBytes = RandomNumberGenerator.GetBytes(NetworkProtocol.SnapshotChunkSize + 5);
+        var secondManifest = SnapshotBuilder.Describe(secondBytes);
+        await using (var swapped = new DedicatedServer(runningBase with { StartupSave = "save-b" }))
+        {
+            await swapped.StartAsync();
+            Assert(!swapped.GameRunning && swapped.WorldManifest is null && swapped.Session is null,
+                "A launch into a different save restored the previous world instead of waiting for the requested one.");
+            Assert(await swapped.Snapshots.GetLatestAsync() is not null, "Dropping the session also dropped the checkpoint.");
+            // The funnel then loads save-b and publishes it, exactly like the resident does after a swap.
+            await using var host = new DedicatedClient();
+            await host.ConnectAsync("127.0.0.1", swapped.Port, hello);
+            await host.ClaimHostAsync();
+            await host.UploadWorldAsync(secondManifest, new MemoryStream(secondBytes));
+            await host.StartGameAsync();
+            Assert(swapped.GameRunning && swapped.WorldManifest?.Id == secondManifest.Id, "The swapped-in world never ran.");
+        }
+        // The room now belongs to save-b: relaunching into it resumes the new world, and relaunching into save-a is a
+        // fresh swap that must drop it rather than quietly run the world the operator left.
+        await using (var settled = new DedicatedServer(runningBase with { StartupSave = "save-b" }))
+        {
+            await settled.StartAsync();
+            Assert(settled.GameRunning && settled.WorldManifest?.Id == secondManifest.Id, "The swapped-in world did not survive a restart.");
+        }
+        await using (var back = new DedicatedServer(runningBase))
+        {
+            await back.StartAsync();
+            Assert(!back.GameRunning && back.WorldManifest is null, "A later launch resurrected the world the operator swapped away from.");
+        }
+        // A launch that names no save (lobby, or state written before this field existed) keeps the old behaviour.
+        var lobbyDirectory = Path.Combine(root, "admin-startup-save-lobby");
+        await using (var first = new DedicatedServer(runningBase with { DataDirectory = lobbyDirectory }))
+        {
+            await first.StartAsync();
+            await using var host = new DedicatedClient();
+            await host.ConnectAsync("127.0.0.1", first.Port, hello);
+            await host.ClaimHostAsync();
+            await host.UploadWorldAsync(manifest, new MemoryStream(bytes));
+            await host.StartGameAsync();
+            Assert(first.GameRunning, "The lobby room never started running.");
+        }
+        await using (var unnamed = new DedicatedServer(new ServerOptions(Port: 0, DataDirectory: lobbyDirectory,
+            GameVersion: hello.GameVersion, ModHash: hello.ModHash, AdminPassword: secret)))
+        {
+            await unnamed.StartAsync();
+            Assert(unnamed.GameRunning && unnamed.WorldManifest?.Id == manifest.Id,
+                "A launch without a save name dropped a resumable room.");
+        }
+    }
+
     private sealed class PausedUpload(byte[] bytes) : MemoryStream(bytes)
     {
         internal readonly TaskCompletionSource SecondRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -429,3 +633,4 @@ internal static class AdminVerification
         throw new Exception("Expected " + typeof(T).Name);
     }
 }
+

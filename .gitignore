@@ -43,3 +43,20 @@ workshop-local/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Local planning memory (worktree-only, never published)
+progress-archive.md
+task_plan-archive.md
+findings-archive.md
+
+# Local research scratch (dumps, probe outputs, local binaries)
+_lab/
+*.bak
+task_plan*.md
+findings*.md
+progress*.md
+
+# Legacy container assets superseded by Dockerfile + deploy/container
+docker/
+**/__pycache__/
+*.pyc

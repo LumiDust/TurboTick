@@ -33,7 +33,7 @@ internal static class AcceptanceRun
         if (!enabled || !SharedColony.Gating) return;
         if (Clock.Now < nextAction) return;
         nextAction = Clock.Now + 1f;
-        try { Act(step++ % 4); }
+        try { Act(step++ % 5); }
         catch (Exception error) { Log.Warning("[TurboTick] 验收脚本动作失败：" + error.Message); }
     }
 
@@ -58,14 +58,19 @@ internal static class AcceptanceRun
             }
             case 2:
             {
-                // A state write on a thing, so it exercises the payload/apply path rather than a pawn flag.
+                // Go through the real entry point, not SharedActions.CaptureForbid. Calling the helper
+                // directly proved only that the command path works, while the layer that has actually broken
+                // - the patch that intercepts the game's own call - was never exercised.
                 var item = map.listerThings.AllThings
                     .FirstOrDefault(t => t.def.category == ThingCategory.Item && t.Spawned);
-                if (item is not null) SharedActions.CaptureForbid(item, !item.IsForbidden(Faction.OfPlayer));
+                if (item is not null) ForbidUtility.SetForbidden(item, !item.IsForbidden(Faction.OfPlayer));
                 break;
             }
             case 3:
                 RunGizmoSample(map);
+                break;
+            case 4:
+                RunRealGizmoClick(map);
                 break;
         }
         issued++;
@@ -110,4 +115,82 @@ internal static class AcceptanceRun
             Log.Message($"[TurboTick] 验收脚本：gizmo #{gizmoSamples} {target.def.defName} "
                 + $"switch={flickable is not null} 片段变化={changed}");
     }
+
+    private static int realClicks;
+
+    /// <summary>
+    /// The one hop the audit said could not be automated: a gizmo's <c>ProcessInput</c>, which is what the
+    /// GUI calls when the player clicks. Running the capture helper directly (case 3 above) proves the command
+    /// path works but never touches the patch that intercepts the game's own call.
+    ///
+    /// It is synthesizable after all: 1.7's implementations are just
+    /// <c>Command_Toggle.ProcessInput</c> = <c>base.ProcessInput(ev); toggleAction();</c> and the same for
+    /// <c>Command_Action</c> (decompiled Verse/Command_Toggle.cs:33, Verse/Command_Action.cs:16) - no
+    /// hit-test, unlike the GUI drawer. So an <c>Event</c> of type MouseUp reaches the patched method.
+    /// Everything else stays real: the gizmo comes from <c>Thing.GetGizmos()</c>, the selection is real, and
+    /// the action runs whichever delegate the game installed.
+    /// </summary>
+    private static void RunRealGizmoClick(Map map)
+    {
+        // Keep clicking the same object so the transition alternates. `WantsFlick()` is
+        // `wantSwitchOn != switchOnInt` and both fields start true (RimWorld/CompFlickable.cs:12-13), so the
+        // first click is always False→True and only a second click on the same thing gives True→False.
+        // Picking a fresh target each call made the log look stuck at False→True.
+        if (realGizmoTarget is ThingWithComps { Destroyed: false, Spawned: true } kept
+            && kept.GetComp<CompFlickable>() is not null && kept.Map == map)
+        {
+            ClickRealGizmo(kept);
+            return;
+        }
+        var target = map.listerThings.AllThings.OfType<ThingWithComps>()
+            .FirstOrDefault(t => t.Spawned && !t.Destroyed && t.GetComp<CompFlickable>() is not null);
+        if (target is null)
+        {
+            if (realClicks == 0 && ++noFlickableTargets == 1)
+                Log.Message("[TurboTick] 验收脚本：地图上没有带 CompFlickable 的物体，真实 gizmo 点击跳过");
+            return;
+        }
+        realGizmoTarget = target;
+        ClickRealGizmo(target);
+    }
+
+    private static ThingWithComps? realGizmoTarget;
+
+    private static void ClickRealGizmo(ThingWithComps target)
+    {
+        Find.Selector.ClearSelection();
+        Find.Selector.Select(target);
+        // Ask the flickable comp for its own gizmos. Reading Thing.GetGizmos() and taking the first toggle
+        // picked the wrong one: a door's first Command_Toggle is "hold open", which changes holdOpenInt and
+        // never touches WantsFlick - the run then logged False→False and proved nothing.
+        var comp = target.GetComp<CompFlickable>();
+        if (comp is null) return;
+        var toggle = comp.CompGetGizmosExtra().OfType<Command_Toggle>()
+            .FirstOrDefault(g => g.toggleAction is not null);
+        if (toggle is null)
+        {
+            // A door without a faction never yields this gizmo (CompFlickable checks Faction.OfPlayer), so
+            // "target found, gizmo missing" has to be visible instead of looking like a silent pass.
+            if (realClicks == 0) Log.Message($"[TurboTick] 验收脚本：{target.def.defName} 的 flickable 没有可点 gizmo（多半不是玩家阵营）");
+            return;
+        }
+        var ev = new UnityEngine.Event
+        {
+            type = UnityEngine.EventType.MouseUp,
+            button = 0,
+            mousePosition = new UnityEngine.Vector2(10f, 10f)
+        };
+        var before = comp.WantsFlick();
+        // Hits GizmoStatePatch: Prefix samples the selection, Postfix ships the difference and sets the hold.
+        toggle.ProcessInput(ev);
+        var after = comp.WantsFlick();
+        realClicks++;
+        if (realClicks <= 6)
+            Log.Message($"[TurboTick] 验收脚本：真实 gizmo 点击 #{realClicks} {target.def.defName} "
+                + $"wantsFlick {before}→{after}");
+    }
+
+    private static int noFlickableTargets;
 }
+
+

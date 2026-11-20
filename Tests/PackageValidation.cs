@@ -6,12 +6,18 @@ using System.Xml.Linq;
 
 static class PackageValidation
 {
-    public static void Validate()
+    /// <summary>The directory that holds About/About.xml, found by walking up from the test binary.</summary>
+    public static string PackageRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory != null && !File.Exists(Path.Combine(directory.FullName, "About", "About.xml")))
             directory = directory.Parent;
-        var root = directory?.FullName ?? throw new Exception("Repository package root not found.");
+        return directory?.FullName ?? throw new Exception("Repository package root not found.");
+    }
+
+    public static void Validate()
+    {
+        var root = PackageRoot();
         void Require(bool valid, string text) { if (!valid) throw new Exception(text); }
         var about = XDocument.Load(Path.Combine(root, "About", "About.xml")).Root!;
         Require(about.Element("name")?.Value == "TurboTick", "canonical mod title");
@@ -81,3 +87,4 @@ static class PackageValidation
              && !sources.Contains("RTClient.", StringComparison.Ordinal), "runtime integration with reference mods remains");
     }
 }
+

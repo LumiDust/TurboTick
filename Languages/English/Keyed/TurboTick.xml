@@ -51,8 +51,6 @@
   <TurboTick_OpenLobby>Open multiplayer lobby</TurboTick_OpenLobby>
   <TurboTick_LobbySubtitle>Build one colony together. Join your friends' world at any time.</TurboTick_LobbySubtitle>
   <TurboTick_LobbyFooter>TurboTick · RimWorld 1.7 · Native time controls synchronize for everyone</TurboTick_LobbyFooter>
-  <TurboTick_HostTab>Host game</TurboTick_HostTab>
-  <TurboTick_JoinTab>Join game</TurboTick_JoinTab>
   <TurboTick_WorldSource>2. Choose your colony</TurboTick_WorldSource>
   <TurboTick_CurrentColony>Use current colony</TurboTick_CurrentColony>
   <TurboTick_CurrentColonyDesc>Share the colony you are playing with friends.</TurboTick_CurrentColonyDesc>
@@ -63,40 +61,39 @@
   <TurboTick_SearchSaves>Type a save name to filter</TurboTick_SearchSaves>
   <TurboTick_NoSaves>No matching saves. You can create a new colony.</TurboTick_NoSaves>
   <TurboTick_RoomSettings>Room settings</TurboTick_RoomSettings>
-  <TurboTick_HostConnectStep>1. Connect to dedicated server</TurboTick_HostConnectStep>
-  <TurboTick_ConnectAsHost>Connect and request host role</TurboTick_ConnectAsHost>
-  <TurboTick_HostGuideTitle>Connect, then host</TurboTick_HostGuideTitle>
-  <TurboTick_HostGuide>1. Enter the running dedicated server's address, port and your player name.\n\n2. Connect and obtain the host role, then select a save or create a colony.\n\n3. Publish the loaded/generated colony to that same server.\n\nOther players join this server. It runs independently of the host's computer.</TurboTick_HostGuide>
-  <TurboTick_DedicatedConnected>Server connected · Host</TurboTick_DedicatedConnected>
-  <TurboTick_HostSaveGuide>The dedicated server has granted you the host role.\n\nSelect a save or create a colony, then publish it to this server for everyone to load.</TurboTick_HostSaveGuide>
-  <TurboTick_HostConnectFirst>Use Host game to connect to the dedicated server and obtain the host role first.</TurboTick_HostConnectFirst>
-  <TurboTick_HostConnectionLost>The connection or host role changed. Save publication has stopped; reconnect to the server.</TurboTick_HostConnectionLost>
-  <TurboTick_HostRoleReady>The server confirmed your host role. Select a save or create a colony.</TurboTick_HostRoleReady>
-  <TurboTick_HostOccupied>This server already has a host. Use Join game to enter.</TurboTick_HostOccupied>
+  <TurboTick_ConnectStep>1. Connect to the dedicated server</TurboTick_ConnectStep>
+  <TurboTick_ConnectToServer>Connect and enter</TurboTick_ConnectToServer>
+  <TurboTick_DeployColony>+ Deploy a colony</TurboTick_DeployColony>
+  <TurboTick_ConnectGuideTitle>The server drives every frame</TurboTick_ConnectGuideTitle>
+  <TurboTick_ConnectGuideStep1>Enter the dedicated server's address, port and your player name.</TurboTick_ConnectGuideStep1>
+  <TurboTick_ConnectGuideStep2>Connecting downloads the server's save and catches up automatically; this game only renders, it never simulates the world.</TurboTick_ConnectGuideStep2>
+  <TurboTick_ConnectGuideStep3>To replace the colony, use Deploy a colony to hand a local save or a new colony to the server.</TurboTick_ConnectGuideStep3>
+  <TurboTick_DedicatedConnected>Server connected · authority</TurboTick_DedicatedConnected>
+  <TurboTick_HostSaveGuide>The server accepted your deployment request.\n\nSelect a save or create a colony, then it uploads to this server for everyone to load.</TurboTick_HostSaveGuide>
+  <TurboTick_HostConnectFirst>Connect to the dedicated server before deploying a colony.</TurboTick_HostConnectFirst>
+  <TurboTick_HostConnectionLost>The connection or deployment permission changed. Save publication has stopped; reconnect to the server.</TurboTick_HostConnectionLost>
+  <TurboTick_HostRoleReady>The server accepted your deployment request. Select a save or create a colony.</TurboTick_HostRoleReady>
+  <TurboTick_HostOccupied>Another player currently holds deployment rights on this server. Try again after they disconnect.</TurboTick_HostOccupied>
   <TurboTick_ConnectionFailed>Dedicated server connection did not complete: {0}</TurboTick_ConnectionFailed>
   <TurboTick_ServerWorldContinues>The server already has a shared colony. Continuing its saved world.</TurboTick_ServerWorldContinues>
   <TurboTick_DedicatedRoomAddress>Dedicated server: {0}</TurboTick_DedicatedRoomAddress>
-  <TurboTick_CreateAndHost>Create and host</TurboTick_CreateAndHost>
-  <TurboTick_StartHosting>Start hosting</TurboTick_StartHosting>
-  <TurboTick_DirectConnect>Direct connection</TurboTick_DirectConnect>
-  <TurboTick_JoinGame>Join multiplayer game</TurboTick_JoinGame>
-  <TurboTick_JoinGuideTitle>Land together</TurboTick_JoinGuideTitle>
-  <TurboTick_JoinGuide>1. Get the dedicated server's address and port from the host.\n\n2. Use the same game version, mods and configuration.\n\n3. Join to download the save and catch up automatically.\n\nColored pointers and names show other players on the same map. Use the native pause and speed buttons.</TurboTick_JoinGuide>
+  <TurboTick_CreateAndHost>Deploy a new colony</TurboTick_CreateAndHost>
+  <TurboTick_StartHosting>Deploy the selected colony</TurboTick_StartHosting>
   <TurboTick_PreparingRoom>Preparing your room</TurboTick_PreparingRoom>
   <TurboTick_RoomTitle>Multiplayer room</TurboTick_RoomTitle>
   <TurboTick_CopyPort>Copy address and port</TurboTick_CopyPort>
   <TurboTick_BackToGame>Back to game</TurboTick_BackToGame>
-  <TurboTick_WaitForHost>Connected. Waiting for the host to share a colony; the save will load automatically.</TurboTick_WaitForHost>
+  <TurboTick_WaitForHost>Connected to the server. Waiting for a shared colony; it loads automatically once ready.</TurboTick_WaitForHost>
   <TurboTick_InvalidPort>Enter a port between 1 and 65535.</TurboTick_InvalidPort>
   <TurboTick_InvalidName>Enter a player name with 1 to 32 printable characters.</TurboTick_InvalidName>
   <TurboTick_InvalidHost>Enter a server address.</TurboTick_InvalidHost>
   <TurboTick_ChooseSave>Select a saved colony or create a new one.</TurboTick_ChooseSave>
-  <TurboTick_HostCreating>Complete the native new-colony setup to host automatically.</TurboTick_HostCreating>
-  <TurboTick_HostLoading>Loading the selected colony, then hosting automatically.</TurboTick_HostLoading>
-  <TurboTick_HostConnecting>Connecting to the dedicated server and requesting the host role...</TurboTick_HostConnecting>
+  <TurboTick_HostCreating>Complete the native new-colony setup to deploy it automatically.</TurboTick_HostCreating>
+  <TurboTick_HostLoading>Loading the selected colony, then deploying it automatically.</TurboTick_HostLoading>
+  <TurboTick_HostConnecting>Connecting to the dedicated server and requesting deployment rights...</TurboTick_HostConnecting>
   <TurboTick_HostPublishing>Publishing the shared save. The game will open automatically...</TurboTick_HostPublishing>
-  <TurboTick_HostReady>Your room is ready. Friends can join now.</TurboTick_HostReady>
-  <TurboTick_HostCancelled>Hosting cancelled.</TurboTick_HostCancelled>
+  <TurboTick_HostReady>The shared colony is ready. Friends can join now.</TurboTick_HostReady>
+  <TurboTick_HostCancelled>Deployment cancelled.</TurboTick_HostCancelled>
   <TurboTick_HostFailed>Room setup did not complete: {0}</TurboTick_HostFailed>
   <TurboTick_HostPatchesMissing>Required synchronization patches are not ready. Check diagnostics.</TurboTick_HostPatchesMissing>
   <TurboTick_ShowPlayerCursors>Show other players' pointers</TurboTick_ShowPlayerCursors>
@@ -107,9 +104,8 @@
   <TurboTick_HudLatency>{0} ms</TurboTick_HudLatency>
   <TurboTick_HudLatencyUnknown>Measuring latency</TurboTick_HudLatencyUnknown>
   <TurboTick_HudYou>You</TurboTick_HudYou>
-  <TurboTick_HudHost>Host</TurboTick_HudHost>
-  <TurboTick_HudController>Controller</TurboTick_HudController>
-  <TurboTick_HudReadOnly>Read-only</TurboTick_HudReadOnly>
+  <TurboTick_HudCanCommand>Can command</TurboTick_HudCanCommand>
+  <TurboTick_HudViewOnly>View only</TurboTick_HudViewOnly>
   <TurboTick_HudLobby>In lobby</TurboTick_HudLobby>
   <TurboTick_HudSynced>In sync · tick {0}</TurboTick_HudSynced>
   <TurboTick_HudSyncing>Synchronizing world</TurboTick_HudSyncing>
@@ -121,6 +117,18 @@
   <TurboTick_HudPlayers>Players</TurboTick_HudPlayers>
   <TurboTick_HudRoom>Room</TurboTick_HudRoom>
   <TurboTick_HudOnMap>On map</TurboTick_HudOnMap>
+  <!-- Server refusals: these used to exist only in the coordinator's console -->
+  <TurboTick_NoticeRateLimited>That action was too large for the server to accept as one step; it was refused. Split the bulk action into a few smaller ones.</TurboTick_NoticeRateLimited>
+  <TurboTick_NoticeUnknownCommand>This action is not part of the shared action set, so it was not sent to the other players.</TurboTick_NoticeUnknownCommand>
+  <TurboTick_NoticeNotPlaying>The shared colony is not running; this action was not sent.</TurboTick_NoticeNotPlaying>
+  <TurboTick_NoticeInvalidCommand>The action payload was invalid; nothing was sent to the other players.</TurboTick_NoticeInvalidCommand>
+  <TurboTick_NoticeSimulationReadOnly>The simulation process does not issue player actions.</TurboTick_NoticeSimulationReadOnly>
+  <TurboTick_NoticeOther>The server refused this action: {0}</TurboTick_NoticeOther>
+  <TurboTick_NoticeFolded>({0} more of the same were suppressed)</TurboTick_NoticeFolded>
+  <TurboTick_HudRefused>Refused: {0}</TurboTick_HudRefused>
+  <TurboTick_HudBehind>{0} ticks behind · catching up</TurboTick_HudBehind>
+  <TurboTick_HudBehindCheckpoint>{0} ticks behind · reload from checkpoint advised</TurboTick_HudBehindCheckpoint>
+  <TurboTick_HudTooltipSync>Server tick {0} · local tick {1} · behind {2}</TurboTick_HudTooltipSync>
   <TurboTick_ManageServer>Manage server</TurboTick_ManageServer>
   <TurboTick_AdminGuide>Use the server administration password to check its status or archive and restart. This remains available when the normal connection fails because game versions or mods differ.</TurboTick_AdminGuide>
   <TurboTick_AdminPassword>Administration password</TurboTick_AdminPassword>
@@ -151,10 +159,61 @@
   <TurboTick_AdminConnectionFailed>The administration connection was interrupted or did not complete. Check the address, port and server, then retry. Older servers may need an update.</TurboTick_AdminConnectionFailed>
   <TurboTick_AdminUnknown>Not set yet</TurboTick_AdminUnknown>
   <TurboTick_RoomDisconnected>Room disconnected</TurboTick_RoomDisconnected>
+  <TurboTick_NotConnected>Not connected</TurboTick_NotConnected>
   <TurboTick_RoomDisconnectedGuide>You are not connected to this room. Reconnect, or use Manage server above to check and restart the server.</TurboTick_RoomDisconnectedGuide>
   <TurboTick_RoomConnecting>Connecting to the dedicated server. Please wait...</TurboTick_RoomConnecting>
   <TurboTick_FingerprintMismatch>The dedicated server refused this client: the mod contents, load order or mod settings differ.
 Local fingerprint: {0}
 Per-file manifest: {1}
 Diff that file against the host's copy to name the exact mod and file. Common causes: both the workshop and a local copy of the same mod are installed (the packageId gains a _steam suffix), a different Harmony build, or a mod the other side does not have.</TurboTick_FingerprintMismatch>
+  <TurboTick_ModSync_Title>Mods differ: {0} missing, {1} extra, {2} out of order</TurboTick_ModSync_Title>
+  <TurboTick_ModSync_Clean>Your mod list matches the server.</TurboTick_ModSync_Clean>
+  <TurboTick_ModSync_Missing>The server has these and you do not ({0}):</TurboTick_ModSync_Missing>
+  <TurboTick_ModSync_Extra>You have these and the server does not ({0}):</TurboTick_ModSync_Extra>
+  <TurboTick_ModSync_Order>Both sides have these but in a different order ({0}):</TurboTick_ModSync_Order>
+  <TurboTick_ModSync_ServerOrder>The server's full load order ({0}):</TurboTick_ModSync_ServerOrder>
+  <TurboTick_ModSync_Open>open the workshop page</TurboTick_ModSync_Open>
+  <TurboTick_ModSync_NoWorkshop>not a workshop mod, install it manually</TurboTick_ModSync_NoWorkshop>
+  <TurboTick_ModSync_Subscribe>Subscribe to the missing mods</TurboTick_ModSync_Subscribe>
+  <TurboTick_ModSync_Reorder>Copy the server's load order</TurboTick_ModSync_Reorder>
+  <TurboTick_ModSync_ReorderDone>Written to ModsConfig.xml; restart the game to apply.</TurboTick_ModSync_ReorderDone>
+  <TurboTick_ModSync_OpenedPages>Opened {0} workshop pages. Subscribe, then restart the game.</TurboTick_ModSync_OpenedPages>
+  <TurboTick_ModSync_NoWorkshopPages>None of the missing mods has a workshop page; install them manually.</TurboTick_ModSync_NoWorkshopPages>
+  <!-- Mod verification table: one row per mod, each with its own verdict. Short column labels and verdicts; the
+       sentence that explains what to do lives in the tooltip. -->
+  <TurboTick_ModCheck_ColumnName>Mod</TurboTick_ModCheck_ColumnName>
+  <TurboTick_ModCheck_ColumnRoom>Room #</TurboTick_ModCheck_ColumnRoom>
+  <TurboTick_ModCheck_ColumnLocal>Local #</TurboTick_ModCheck_ColumnLocal>
+  <TurboTick_ModCheck_ColumnVerdict>Verdict</TurboTick_ModCheck_ColumnVerdict>
+  <TurboTick_ModCheck_Ok>OK</TurboTick_ModCheck_Ok>
+  <TurboTick_ModCheck_Missing>Missing · install</TurboTick_ModCheck_Missing>
+  <TurboTick_ModCheck_Extra>Extra · disable</TurboTick_ModCheck_Extra>
+  <TurboTick_ModCheck_Version>Wrong build · update</TurboTick_ModCheck_Version>
+  <TurboTick_ModCheck_Order>Wrong order · reorder</TurboTick_ModCheck_Order>
+  <TurboTick_ModCheck_MissingHint>The room runs it, this machine does not have it loaded. Use the button on the right to open its workshop page, then restart.</TurboTick_ModCheck_MissingHint>
+  <TurboTick_ModCheck_ExtraHint>This machine loads it, the room does not. Disable it before joining or the simulation will not match.</TurboTick_ModCheck_ExtraHint>
+  <TurboTick_ModCheck_VersionHint>Both sides have this mod but their About.xml &lt;modVersion&gt; differs. The usual cause is an old build kept locally, or subscribing to both a workshop copy and a local copy. Match the room's version and rejoin.</TurboTick_ModCheck_VersionHint>
+  <TurboTick_ModCheck_OrderHint>Both sides have it, same version, only the load position differs. Use "sync load order" below to fix all of them at once.</TurboTick_ModCheck_OrderHint>
+  <TurboTick_ModCheck_Versions>Version: room {0} · local {1}</TurboTick_ModCheck_Versions>
+  <TurboTick_ModCheck_Undeclared>(not declared)</TurboTick_ModCheck_Undeclared>
+  <TurboTick_ModCheck_Unknown>unknown</TurboTick_ModCheck_Unknown>
+  <TurboTick_ModCheck_GameVersions>Game version: room {0} · local {1}</TurboTick_ModCheck_GameVersions>
+  <TurboTick_ModCheck_GameVersionDiffers>← differs</TurboTick_ModCheck_GameVersionDiffers>
+  <TurboTick_ModCheck_AllOk>{0} mods, all match</TurboTick_ModCheck_AllOk>
+  <TurboTick_ModCheck_Summary>{0} mods: {1}; the other {2} match</TurboTick_ModCheck_Summary>
+  <TurboTick_ModCheck_CountMissing>missing {0}</TurboTick_ModCheck_CountMissing>
+  <TurboTick_ModCheck_CountVersion>wrong build {0}</TurboTick_ModCheck_CountVersion>
+  <TurboTick_ModCheck_Content>files differ</TurboTick_ModCheck_Content>
+  <TurboTick_ModCheck_CountContent>files differ {0}</TurboTick_ModCheck_CountContent>
+  <TurboTick_ModCheck_ContentHint>Both sides have this mod with the same version and the same position, but the files themselves differ: a hand-patched dll, a half-downloaded workshop item, or a beta build. Delete the local copy and resubscribe (or copy the room's copy over).</TurboTick_ModCheck_ContentHint>
+  <TurboTick_ModCheck_RoomIsOlder>The room's copy is older: room {0}, local {1}. The server holds the stale build and needs updating.</TurboTick_ModCheck_RoomIsOlder>
+  <TurboTick_ModCheck_LocalIsOlder>The local copy is older: room {0}, local {1}. This machine needs the update, usually because the workshop item was updated but never re-downloaded.</TurboTick_ModCheck_LocalIsOlder>
+  <TurboTick_ModCheck_UpdatedSinceLaunch>{0} mods were updated since the last launch: {1}. If the room worked minutes ago and refuses now, this is usually why.</TurboTick_ModCheck_UpdatedSinceLaunch>
+  <TurboTick_ModCheck_RoomOlderMark>room older {0}</TurboTick_ModCheck_RoomOlderMark>
+  <TurboTick_ModCheck_LocalOlderMark>local older {0}</TurboTick_ModCheck_LocalOlderMark>
+  <TurboTick_ModCheck_CountOrder>wrong order {0}</TurboTick_ModCheck_CountOrder>
+  <TurboTick_ModCheck_CountExtra>extra {0}</TurboTick_ModCheck_CountExtra>
+  <TurboTick_ModCheck_Close>Close</TurboTick_ModCheck_Close>
+  <TurboTick_ModMismatchDetail>Mods differ: {0}. The sync window is open.</TurboTick_ModMismatchDetail>
 </LanguageData>
+

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The admin page as a standalone process.
+
+    It must never reference the game assemblies: the whole point of this project is that the HTTP listener
+    survives a game restart, so it cannot live in the process that dies. Everything it needs from the game
+    arrives as files (headless-status.json, preflight.json, ModsConfig.xml, the mods tree, the tee'd log) and
+    everything it wants the game to do leaves as a file in the command inbox.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>TurboTick.Portal</AssemblyName>
+    <RootNamespace>TurboTick.Portal</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Networking\TurboTick.Networking.csproj" />
+  </ItemGroup>
+
+</Project>

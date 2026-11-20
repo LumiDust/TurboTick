@@ -48,7 +48,7 @@ public static class Diagnostics
         text.AppendLine($"TPS 实测 {TurboState.MeasuredTps:0} / 目标 {TurboState.TargetTps:0}{(TurboState.Behind ? "（偏低）" : "")}");
         if (TurboState.Authority.SessionConnected)
         {
-            text.AppendLine("专用服务器 " + RoomConnection.Endpoint + " · 房主 " + (RoomConnection.IsHost ? "是" : "否"));
+            text.AppendLine("专用服务器 " + RoomConnection.Endpoint + " · 部署权限 " + (RoomConnection.IsHost ? "有" : "无"));
             text.AppendLine("检查点所有者 " + (RoomConnection.IsCheckpointOwner ? "是" : "否"));
         }
         if (session.Phase == SharedPhase.Faulted) text.AppendLine("错误 " + session.LastError);

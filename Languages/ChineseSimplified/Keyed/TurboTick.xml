@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LanguageData>
-  <TurboTick_Prototype>主持和加入都先连接专用服务器。主持者取得房主身份后选择已有存档或新建殖民地，再由专服向全员分发共享存档。</TurboTick_Prototype>
+  <TurboTick_Prototype>所有玩家都先连接专用服务器，由它持有并模拟唯一的殖民地，再把画面同步给每个客户端。</TurboTick_Prototype>
   <TurboTick_Host>服务器地址</TurboTick_Host>
   <TurboTick_Port>TCP 端口</TurboTick_Port>
   <TurboTick_Player>玩家名称</TurboTick_Player>
@@ -17,7 +17,7 @@
   <TurboTick_CacheSnapshot>下载／续传服务器快照到缓存</TurboTick_CacheSnapshot>
   <TurboTick_HudTps>实测 {0} TPS · 目标 {1} TPS</TurboTick_HudTps>
   <TurboTick_Held>连接等待／中断：暂缓推进。请重连或在设置中退出房间。</TurboTick_Held>
-  <TurboTick_RoomPrototype>房间已连接，等待房主开始共享殖民地。</TurboTick_RoomPrototype>
+  <TurboTick_RoomPrototype>已连接专服，等待共享殖民地就绪。</TurboTick_RoomPrototype>
   <TurboTick_Local>未加入房间 · 本地模式</TurboTick_Local>
   <TurboTick_LowTps>实际 TPS 低于目标；由用户或服务端统一调整倍率。</TurboTick_LowTps>
   <TurboTick_Disable>关闭额外倍率</TurboTick_Disable>
@@ -39,7 +39,7 @@
   <TurboTick_Experimental>实验性：同步运输舱装载</TurboTick_Experimental>
   <TurboTick_ExperimentalDesc>把装舱操作同步给其他人。尚未在实机验证，默认关闭；出问题请关掉它。</TurboTick_ExperimentalDesc>
   <TurboTick_EveryoneTrades>允许所有人交易/组建远行队（不同步）</TurboTick_EveryoneTrades>
-  <TurboTick_EveryoneTradesDesc>默认只有房主能进行交易与组建远行队，避免两端银两、货物与人口不一致。开启后各自操作，可能造成分叉。</TurboTick_EveryoneTradesDesc>
+  <TurboTick_EveryoneTradesDesc>默认只有被授权的玩家能进行交易与组建远行队，避免银两、货物与人口在不同客户端上分叉。开启后谁的客户端都能提交命令，由专服依次执行。</TurboTick_EveryoneTradesDesc>
   <TurboTick_NativeControls>连接房间后，游戏右下角原生暂停、常速、快速、超快按钮及对应快捷键默认全员同步；一人操作，服务端确认后生效。单机沿用原版速度。</TurboTick_NativeControls>
   <TurboTick_NativeHud>TurboTick · {0} · r{1}</TurboTick_NativeHud>
   <TurboTick_NativePaused>暂停</TurboTick_NativePaused>
@@ -51,8 +51,6 @@
   <TurboTick_OpenLobby>打开多人游戏大厅</TurboTick_OpenLobby>
   <TurboTick_LobbySubtitle>一起经营同一个殖民地，随时加入朋友的世界。</TurboTick_LobbySubtitle>
   <TurboTick_LobbyFooter>TurboTick · RimWorld 1.7 · 原生时间控件全员同步</TurboTick_LobbyFooter>
-  <TurboTick_HostTab>主持游戏</TurboTick_HostTab>
-  <TurboTick_JoinTab>加入游戏</TurboTick_JoinTab>
   <TurboTick_WorldSource>2. 选择你的殖民地</TurboTick_WorldSource>
   <TurboTick_CurrentColony>使用当前殖民地</TurboTick_CurrentColony>
   <TurboTick_CurrentColonyDesc>将正在游玩的存档发布给朋友。</TurboTick_CurrentColonyDesc>
@@ -63,40 +61,39 @@
   <TurboTick_SearchSaves>输入存档名称筛选</TurboTick_SearchSaves>
   <TurboTick_NoSaves>暂无匹配的存档。可以选择新建殖民地。</TurboTick_NoSaves>
   <TurboTick_RoomSettings>房间设置</TurboTick_RoomSettings>
-  <TurboTick_HostConnectStep>1. 连接专用服务器</TurboTick_HostConnectStep>
-  <TurboTick_ConnectAsHost>连接专服并申请主持</TurboTick_ConnectAsHost>
-  <TurboTick_HostGuideTitle>先连专服，再主持</TurboTick_HostGuideTitle>
-  <TurboTick_HostGuide>1. 填写已启动的专用服务器地址、端口和玩家名。\n\n2. 连接成功并取得房主身份后，选择已有存档或新建殖民地。\n\n3. 完成读档／建图后，把殖民地发布到同一专服。\n\n其他玩家连接这个专服即可加入，专服独立于房主电脑运行。</TurboTick_HostGuide>
-  <TurboTick_DedicatedConnected>专服已连接 · 房主</TurboTick_DedicatedConnected>
-  <TurboTick_HostSaveGuide>已取得专服确认的房主身份。\n\n选择已有存档或新建殖民地，完成后会上传到当前专服，供全员载入。</TurboTick_HostSaveGuide>
-  <TurboTick_HostConnectFirst>请先通过“主持游戏”连接专用服务器并取得房主身份。</TurboTick_HostConnectFirst>
-  <TurboTick_HostConnectionLost>连接或房主身份已变化，存档发布已停止；请重新连接专服。</TurboTick_HostConnectionLost>
-  <TurboTick_HostRoleReady>专服已确认房主身份，请选择已有存档或新建殖民地。</TurboTick_HostRoleReady>
-  <TurboTick_HostOccupied>专服已有房主，请通过“加入游戏”进入。</TurboTick_HostOccupied>
+  <TurboTick_ConnectStep>1. 连接专用服务器</TurboTick_ConnectStep>
+  <TurboTick_ConnectToServer>连接专服并进入</TurboTick_ConnectToServer>
+  <TurboTick_DeployColony>＋ 部署殖民地到专服</TurboTick_DeployColony>
+  <TurboTick_ConnectGuideTitle>所有画面都由专服驱动</TurboTick_ConnectGuideTitle>
+  <TurboTick_ConnectGuideStep1>填写专服地址、端口与玩家名。</TurboTick_ConnectGuideStep1>
+  <TurboTick_ConnectGuideStep2>连接后自动下载服务器存档并追平进度；本机只负责显示，不模拟世界。</TurboTick_ConnectGuideStep2>
+  <TurboTick_ConnectGuideStep3>想换一份殖民地，用「部署殖民地到专服」把本地存档或新建殖民地交给服务器接管。</TurboTick_ConnectGuideStep3>
+  <TurboTick_DedicatedConnected>专服已连接 · 权威端</TurboTick_DedicatedConnected>
+  <TurboTick_HostSaveGuide>专服已接受你的部署请求。\n\n选择已有存档或新建殖民地，完成后会上传到当前专服，供全员载入。</TurboTick_HostSaveGuide>
+  <TurboTick_HostConnectFirst>请先连接专用服务器，再部署殖民地。</TurboTick_HostConnectFirst>
+  <TurboTick_HostConnectionLost>连接或部署权限已变化，存档发布已停止；请重新连接专服。</TurboTick_HostConnectionLost>
+  <TurboTick_HostRoleReady>专服已接受部署请求，请选择已有存档或新建殖民地。</TurboTick_HostRoleReady>
+  <TurboTick_HostOccupied>部署权限已被另一名玩家占用，等对方断开后再试。</TurboTick_HostOccupied>
   <TurboTick_ConnectionFailed>专服连接未完成：{0}</TurboTick_ConnectionFailed>
   <TurboTick_ServerWorldContinues>专服已有共享殖民地，正在继续服务器存档。</TurboTick_ServerWorldContinues>
   <TurboTick_DedicatedRoomAddress>专用服务器：{0}</TurboTick_DedicatedRoomAddress>
-  <TurboTick_CreateAndHost>新建并主持</TurboTick_CreateAndHost>
-  <TurboTick_StartHosting>开始主持</TurboTick_StartHosting>
-  <TurboTick_DirectConnect>直接连接</TurboTick_DirectConnect>
-  <TurboTick_JoinGame>加入多人游戏</TurboTick_JoinGame>
-  <TurboTick_JoinGuideTitle>与朋友一起落地</TurboTick_JoinGuideTitle>
-  <TurboTick_JoinGuide>1. 向房主取得专用服务器的地址与端口。\n\n2. 使用相同的游戏版本、模组与配置。\n\n3. 连接后自动下载存档并追平进度。\n\n同一地图上会显示玩家的彩色指针与名字。暂停和速度使用原版按钮即可。</TurboTick_JoinGuide>
+  <TurboTick_CreateAndHost>部署新殖民地</TurboTick_CreateAndHost>
+  <TurboTick_StartHosting>部署选中的殖民地</TurboTick_StartHosting>
   <TurboTick_PreparingRoom>正在准备你的房间</TurboTick_PreparingRoom>
   <TurboTick_RoomTitle>多人游戏房间</TurboTick_RoomTitle>
   <TurboTick_CopyPort>复制地址与端口</TurboTick_CopyPort>
   <TurboTick_BackToGame>返回游戏</TurboTick_BackToGame>
-  <TurboTick_WaitForHost>已连接房间，等待房主开始共享殖民地；开始后会自动载入。</TurboTick_WaitForHost>
+  <TurboTick_WaitForHost>已连接专服，正在等待共享殖民地；就绪后会自动载入。</TurboTick_WaitForHost>
   <TurboTick_InvalidPort>请输入 1 至 65535 之间的端口。</TurboTick_InvalidPort>
   <TurboTick_InvalidName>请输入 1 至 32 个可显示字符的玩家名称。</TurboTick_InvalidName>
   <TurboTick_InvalidHost>请输入服务器地址。</TurboTick_InvalidHost>
   <TurboTick_ChooseSave>请选择已有存档，或选择新建殖民地。</TurboTick_ChooseSave>
-  <TurboTick_HostCreating>完成原版新建殖民地流程后，自动主持游戏。</TurboTick_HostCreating>
-  <TurboTick_HostLoading>正在载入选中的殖民地，完成后自动主持游戏。</TurboTick_HostLoading>
-  <TurboTick_HostConnecting>正在连接专用服务器并申请房主身份…</TurboTick_HostConnecting>
+  <TurboTick_HostCreating>完成原版新建殖民地流程后，自动部署到专服。</TurboTick_HostCreating>
+  <TurboTick_HostLoading>正在载入选中的殖民地，完成后自动部署到专服。</TurboTick_HostLoading>
+  <TurboTick_HostConnecting>正在连接专用服务器并申请部署权限…</TurboTick_HostConnecting>
   <TurboTick_HostPublishing>正在发布共享存档，完成后自动进入游戏…</TurboTick_HostPublishing>
-  <TurboTick_HostReady>房间已就绪，朋友现在可以加入。</TurboTick_HostReady>
-  <TurboTick_HostCancelled>已取消主持游戏。</TurboTick_HostCancelled>
+  <TurboTick_HostReady>共享殖民地已就绪，朋友现在可以加入。</TurboTick_HostReady>
+  <TurboTick_HostCancelled>已取消部署。</TurboTick_HostCancelled>
   <TurboTick_HostFailed>房间启动未完成：{0}</TurboTick_HostFailed>
   <TurboTick_HostPatchesMissing>关键同步补丁尚未就绪，请查看诊断信息。</TurboTick_HostPatchesMissing>
   <TurboTick_ShowPlayerCursors>显示其他玩家的指针</TurboTick_ShowPlayerCursors>
@@ -107,9 +104,8 @@
   <TurboTick_HudLatency>{0} 毫秒</TurboTick_HudLatency>
   <TurboTick_HudLatencyUnknown>测量延迟中</TurboTick_HudLatencyUnknown>
   <TurboTick_HudYou>你</TurboTick_HudYou>
-  <TurboTick_HudHost>房主</TurboTick_HudHost>
-  <TurboTick_HudController>控制者</TurboTick_HudController>
-  <TurboTick_HudReadOnly>只读</TurboTick_HudReadOnly>
+  <TurboTick_HudCanCommand>可操作</TurboTick_HudCanCommand>
+  <TurboTick_HudViewOnly>仅观看</TurboTick_HudViewOnly>
   <TurboTick_HudLobby>房间待命</TurboTick_HudLobby>
   <TurboTick_HudSynced>同步正常 · tick {0}</TurboTick_HudSynced>
   <TurboTick_HudSyncing>同步存档中</TurboTick_HudSyncing>
@@ -121,6 +117,18 @@
   <TurboTick_HudPlayers>玩家</TurboTick_HudPlayers>
   <TurboTick_HudRoom>房间</TurboTick_HudRoom>
   <TurboTick_HudOnMap>地图中</TurboTick_HudOnMap>
+  <!-- 服务端拒绝回执：以前只写协调器日志，玩家看不到 -->
+  <TurboTick_NoticeRateLimited>这一步操作太大，服务端来不及处理，已经被拒绝。请把批量操作分几次做。</TurboTick_NoticeRateLimited>
+  <TurboTick_NoticeUnknownCommand>这个操作不属于共享动作集，没有同步给其他玩家。</TurboTick_NoticeUnknownCommand>
+  <TurboTick_NoticeNotPlaying>共享殖民地没有在运行，这个操作没有发出去。</TurboTick_NoticeNotPlaying>
+  <TurboTick_NoticeInvalidCommand>操作载荷无效，没有同步给其他玩家。</TurboTick_NoticeInvalidCommand>
+  <TurboTick_NoticeSimulationReadOnly>模拟进程不发送玩家操作。</TurboTick_NoticeSimulationReadOnly>
+  <TurboTick_NoticeOther>服务端拒绝了这次操作：{0}</TurboTick_NoticeOther>
+  <TurboTick_NoticeFolded>（另有 {0} 次同类已被折叠）</TurboTick_NoticeFolded>
+  <TurboTick_HudRefused>操作被拒：{0}</TurboTick_HudRefused>
+  <TurboTick_HudBehind>落后 {0} tick · 追赶中</TurboTick_HudBehind>
+  <TurboTick_HudBehindCheckpoint>落后 {0} tick · 建议从检查点重载</TurboTick_HudBehindCheckpoint>
+  <TurboTick_HudTooltipSync>服务器 tick {0} · 本地 tick {1} · 落后 {2}</TurboTick_HudTooltipSync>
   <TurboTick_ManageServer>管理服务器</TurboTick_ManageServer>
   <TurboTick_AdminGuide>使用服务器管理密码查看状态或归档重开。即使普通连接因游戏版本或模组不同而失败，也可在这里管理服务器。</TurboTick_AdminGuide>
   <TurboTick_AdminPassword>管理密码</TurboTick_AdminPassword>
@@ -140,7 +148,7 @@
   <TurboTick_AdminRefreshing>正在刷新服务器状态…</TurboTick_AdminRefreshing>
   <TurboTick_AdminConfirmReset>确定要归档并重开服务器 {0} 吗？\n\n旧局会归档保留，所有在线玩家都会断开连接。服务器将使用你当前启用的游戏版本、DLC 和模组组合。\n\n本机会返回主菜单的多人大厅；若有需要保留的本地单人进度，请先保存。完成后将重新连接并申请主持，由你选择已有存档或新建殖民地。</TurboTick_AdminConfirmReset>
   <TurboTick_AdminResetting>正在核对当前游戏内容并归档重开，请稍候…</TurboTick_AdminResetting>
-  <TurboTick_AdminResetComplete>服务器已归档重开。取得主持身份后，请重新选择存档或新建殖民地。</TurboTick_AdminResetComplete>
+  <TurboTick_AdminResetComplete>服务器已归档重开。取得部署权限后，请重新选择存档或新建殖民地。</TurboTick_AdminResetComplete>
   <TurboTick_AdminManifestFailed>读取当前游戏与模组信息失败。请检查当前模组配置后重试。</TurboTick_AdminManifestFailed>
   <TurboTick_AdminCancelled>房间连接已变化，本次管理操作已取消。请重新认证目标服务器。</TurboTick_AdminCancelled>
   <TurboTick_AdminRateLimited>管理认证尝试过于频繁。请稍候，再点击重新认证。</TurboTick_AdminRateLimited>
@@ -151,10 +159,60 @@
   <TurboTick_AdminConnectionFailed>管理连接中断或未完成。请检查服务器地址、端口及服务状态后重试；较旧的服务器可能需要更新。</TurboTick_AdminConnectionFailed>
   <TurboTick_AdminUnknown>尚未锁定</TurboTick_AdminUnknown>
   <TurboTick_RoomDisconnected>房间连接已断开</TurboTick_RoomDisconnected>
+  <TurboTick_NotConnected>未连接</TurboTick_NotConnected>
   <TurboTick_RoomDisconnectedGuide>当前尚未连接房间。请重连，或从上方“管理服务器”检查并重开服务器。</TurboTick_RoomDisconnectedGuide>
   <TurboTick_RoomConnecting>正在连接专用服务器，请稍候…</TurboTick_RoomConnecting>
   <TurboTick_FingerprintMismatch>专服连接未完成：本机与服务器的模组内容、加载顺序或 Mod 配置不一致。
 本机指纹：{0}
 逐文件清单：{1}
-把这个文件与房主的那份对比即可定位到具体是哪个 Mod、哪个文件不同。常见原因：同时订阅了创意工坊的旧版本与本地的同一 Mod（packageId 会被加 _steam 后缀）、Harmony 版本不同、装载了对方没有的 Mod。</TurboTick_FingerprintMismatch>
+把这个文件与服务器的那份对比即可定位到具体是哪个 Mod、哪个文件不同。常见原因：同时订阅了创意工坊的旧版本与本地的同一 Mod（packageId 会被加 _steam 后缀）、Harmony 版本不同、装载了对方没有的 Mod。</TurboTick_FingerprintMismatch>
+  <TurboTick_ModSync_Title>模组不一致：缺少 {0} 个、多出 {1} 个、顺序不同 {2} 处</TurboTick_ModSync_Title>
+  <TurboTick_ModSync_Clean>模组列表与服务器一致。</TurboTick_ModSync_Clean>
+  <TurboTick_ModSync_Missing>服务器有、你没有（{0}）：</TurboTick_ModSync_Missing>
+  <TurboTick_ModSync_Extra>你有、服务器没有（{0}）：</TurboTick_ModSync_Extra>
+  <TurboTick_ModSync_Order>两边都有但加载顺序不同（{0}）：</TurboTick_ModSync_Order>
+  <TurboTick_ModSync_ServerOrder>服务器的完整加载顺序（{0} 个）：</TurboTick_ModSync_ServerOrder>
+  <TurboTick_ModSync_Open>打开订阅页</TurboTick_ModSync_Open>
+  <TurboTick_ModSync_NoWorkshop>非创意工坊模组，需手动安装</TurboTick_ModSync_NoWorkshop>
+  <TurboTick_ModSync_Subscribe>订阅缺失的模组</TurboTick_ModSync_Subscribe>
+  <TurboTick_ModSync_Reorder>同步加载顺序</TurboTick_ModSync_Reorder>
+  <TurboTick_ModSync_ReorderDone>已写入 ModsConfig.xml，重启游戏后生效。</TurboTick_ModSync_ReorderDone>
+  <TurboTick_ModSync_OpenedPages>已打开 {0} 个订阅页，订阅后重启游戏。</TurboTick_ModSync_OpenedPages>
+  <TurboTick_ModSync_NoWorkshopPages>缺失的模组都没有创意工坊页面，请手动安装。</TurboTick_ModSync_NoWorkshopPages>
+  <!-- 模组校验表：一行一个模组，每行给一个判定。这些是列与判定的短标签，解释放在悬浮提示里。 -->
+  <TurboTick_ModCheck_ColumnName>模组</TurboTick_ModCheck_ColumnName>
+  <TurboTick_ModCheck_ColumnRoom>房间序号</TurboTick_ModCheck_ColumnRoom>
+  <TurboTick_ModCheck_ColumnLocal>本机序号</TurboTick_ModCheck_ColumnLocal>
+  <TurboTick_ModCheck_ColumnVerdict>判定</TurboTick_ModCheck_ColumnVerdict>
+  <TurboTick_ModCheck_Ok>一致</TurboTick_ModCheck_Ok>
+  <TurboTick_ModCheck_Missing>缺失 · 待安装</TurboTick_ModCheck_Missing>
+  <TurboTick_ModCheck_Extra>多余 · 待关闭</TurboTick_ModCheck_Extra>
+  <TurboTick_ModCheck_Version>版本不同 · 待更新</TurboTick_ModCheck_Version>
+  <TurboTick_ModCheck_Order>顺序不同 · 待重排</TurboTick_ModCheck_Order>
+  <TurboTick_ModCheck_MissingHint>房间在用它，本机没有加载。点右侧按钮打开订阅页，订阅后重启游戏。</TurboTick_ModCheck_MissingHint>
+  <TurboTick_ModCheck_ExtraHint>本机加载了它，房间没有。关掉它再进房，否则模拟会对不上。</TurboTick_ModCheck_ExtraHint>
+  <TurboTick_ModCheck_VersionHint>两边都有这个模组，但 About.xml 里的 &lt;modVersion&gt; 不同；最常见的原因是本机留着旧构建，或同时订阅了工坊版与本地版。换成本机与房间同一个版本再进房。</TurboTick_ModCheck_VersionHint>
+  <TurboTick_ModCheck_OrderHint>两边都有、版本也一致，只是加载位置不同。用下面的「同步加载顺序」一次改完。</TurboTick_ModCheck_OrderHint>
+  <TurboTick_ModCheck_Versions>版本：房间 {0} · 本机 {1}</TurboTick_ModCheck_Versions>
+  <TurboTick_ModCheck_Undeclared>（未声明）</TurboTick_ModCheck_Undeclared>
+  <TurboTick_ModCheck_Unknown>未知</TurboTick_ModCheck_Unknown>
+  <TurboTick_ModCheck_GameVersions>游戏版本：房间 {0} · 本机 {1}</TurboTick_ModCheck_GameVersions>
+  <TurboTick_ModCheck_GameVersionDiffers>← 不一致</TurboTick_ModCheck_GameVersionDiffers>
+  <TurboTick_ModCheck_AllOk>共 {0} 个模组，全部一致</TurboTick_ModCheck_AllOk>
+  <TurboTick_ModCheck_Summary>共 {0} 个模组：{1}；其余 {2} 个一致</TurboTick_ModCheck_Summary>
+  <TurboTick_ModCheck_CountMissing>缺失 {0}</TurboTick_ModCheck_CountMissing>
+  <TurboTick_ModCheck_CountVersion>版本不同 {0}</TurboTick_ModCheck_CountVersion>
+  <TurboTick_ModCheck_Content>文件不同</TurboTick_ModCheck_Content>
+  <TurboTick_ModCheck_CountContent>文件不同 {0}</TurboTick_ModCheck_CountContent>
+  <TurboTick_ModCheck_ContentHint>两边都有这个模组，版本和顺序也一样，但里面的文件内容不同：手工改过的 dll、只下载了一半的工坊条目、或是 beta 分支的构建。删掉本机这一份重新订阅（或把房间那份复制过来）即可。</TurboTick_ModCheck_ContentHint>
+  <TurboTick_ModCheck_RoomIsOlder>房间那份更旧：房间 {0}，本机 {1}。房间里装的是旧版，需要服务端更新。</TurboTick_ModCheck_RoomIsOlder>
+  <TurboTick_ModCheck_LocalIsOlder>本机这份更旧：房间 {0}，本机 {1}。本机需要更新，通常是因为工坊更新后没有重新下载。</TurboTick_ModCheck_LocalIsOlder>
+  <TurboTick_ModCheck_UpdatedSinceLaunch>检测到 {0} 个模组自上次启动后被更新：{1}。若刚才还能进房间，现在被拒绝，多半就是这个原因。</TurboTick_ModCheck_UpdatedSinceLaunch>
+  <TurboTick_ModCheck_RoomOlderMark>房间旧 {0}</TurboTick_ModCheck_RoomOlderMark>
+  <TurboTick_ModCheck_LocalOlderMark>本机旧 {0}</TurboTick_ModCheck_LocalOlderMark>
+  <TurboTick_ModCheck_CountOrder>顺序不同 {0}</TurboTick_ModCheck_CountOrder>
+  <TurboTick_ModCheck_CountExtra>多余 {0}</TurboTick_ModCheck_CountExtra>
+  <TurboTick_ModCheck_Close>关闭</TurboTick_ModCheck_Close>
+  <TurboTick_ModMismatchDetail>模组不一致：{0}。已打开同步窗口。</TurboTick_ModMismatchDetail>
 </LanguageData>
+

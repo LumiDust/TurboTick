@@ -69,7 +69,7 @@ public class TurboTickSettings : ModSettings
             RoomConnection.Connect(this);
         if (Widgets.ButtonText(new Rect(buttons.x + 160f, buttons.y, 150f, 28f), T("TurboTick_Disconnect")))
             RoomConnection.Leave();
-        listing.Label(RoomConnection.Status, 44f);
+        listing.Label(RoomConnection.LiveStatus, 44f);
         listing.Label(T("TurboTick_Fingerprint", RoomConnection.Fingerprint), 38f);
         listing.Gap(6f);
 
@@ -105,6 +105,33 @@ public class TurboTickSettings : ModSettings
     internal static string T(string key, params object[] args)
     {
         string text = key.Translate().ToString();
+        // A key with no translation renders as the key itself - `TurboTick_ConnectStep` on a button. That is
+        // what a stale Languages/ folder looks like in game, and the string is unreadable precisely when the
+        // player needs to read it. Falling back to the spaced-out name is not a translation, but "Connect Step"
+        // is a label and "TurboTick_ConnectStep" is not.
+        if (text == key) text = ReadableFallback(key);
         return args.Length == 0 ? text : string.Format(text, args);
     }
+
+    /// <summary>Turns a missing translation key into something a player can read: drops the mod prefix and
+    /// breaks the camel case (`TurboTick_ConnectGuideStep1` → `Connect Guide Step 1`).
+    ///
+    /// This exists because the alternative failure mode is silent: RimWorld renders the raw key, the layout still
+    /// fits, and nothing in the log says a translation went missing. A screenshot then looks like "the font is
+    /// broken" rather than "the Languages folder is older than the code".</summary>
+    private static string ReadableFallback(string key)
+    {
+        var name = key.StartsWith("TurboTick_", StringComparison.Ordinal) ? key["TurboTick_".Length..] : key;
+        if (name.Length == 0) return key;
+        var text = new System.Text.StringBuilder(name.Length + 8);
+        for (var i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            var boundary = i > 0 && char.IsUpper(c) && !char.IsUpper(name[i - 1]) && name[i - 1] != '_';
+            if (boundary || c == '_') text.Append(' ');
+            if (c != '_') text.Append(c);
+        }
+        return text.ToString();
+    }
 }
+

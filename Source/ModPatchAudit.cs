@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using Verse;
@@ -84,31 +84,82 @@ internal static class ModPatchAudit
     /// "the patch never installed" from "the patch is installed and the click did something unexpected",
     /// which are otherwise indistinguishable in a bug report.
     /// </summary>
+    /// <summary>The gizmo capture's attached/unresolved counts, as a string a probe can read.
+    ///
+    /// <para><b>Why this exists (round 140).</b> The unresolved list was only ever a log line, and one name had been
+    /// unresolved for months without being noticed - the symptom was "this one gizmo does not sync", which nobody had
+    /// looked for because the bossgroup cooldown gap looked like a different bug. An instrument that only writes to a log
+    /// cannot be read by the round that needs it; this puts the same facts behind a command.</para></summary>
+    internal static string GizmoReport()
+    {
+        var ours = TurboTickMod.Harmony.Id;
+        var attached = 0;
+        var unresolved = new System.Collections.Generic.List<string>();
+        var byFallback = new System.Collections.Generic.List<string>();
+        foreach (var typeName in GizmoStatePatch.GizmoTargetNames)
+        {
+            var type = TypeResolver.Find(typeName);
+            if (type is not null && !TypeResolver.Exact(typeName)) byFallback.Add(typeName + " → " + type.FullName);
+            var method = type is null ? null : AccessTools.Method(type, "ProcessInput", [typeof(UnityEngine.Event)]);
+            if (method is null || method.IsAbstract) { unresolved.Add(typeName); continue; }
+            var info = Harmony.GetPatchInfo(method);
+            if (info is not null && info.Prefixes.Any(entry => string.Equals(entry.owner, ours, StringComparison.Ordinal)))
+                attached++;
+            else unresolved.Add(typeName);
+        }
+        return $"gizmo 入口 挂上 {attached} / 共 {GizmoStatePatch.GizmoTargetNames.Length}"
+               + (unresolved.Count > 0 ? $"；未解析：{string.Join(", ", unresolved)}" : "；全部解析")
+               // A name that only resolved by simple name has a wrong namespace: it works today and would stop working
+               // if two assemblies ever declared the same simple name, so the report names it instead of hiding it.
+               + (byFallback.Count > 0 ? $"；靠简单名回落解析（命名空间写错）：{string.Join(", ", byFallback)}" : "");
+    }
+
     private static void ReportGizmoHooks(string ours)
     {
         var attached = 0;
-        foreach (var typeName in GizmoTypes)
+        var unresolved = new List<string>();
+        foreach (var typeName in GizmoStatePatch.GizmoTargetNames)
         {
-            var type = AccessTools.TypeByName(typeName);
+            var type = TypeResolver.Find(typeName);
             var method = type is null ? null : AccessTools.Method(type, "ProcessInput", [typeof(UnityEngine.Event)]);
-            if (method is null || method.IsAbstract) continue;
+            if (method is null || method.IsAbstract) { unresolved.Add(typeName); continue; }
             var info = Harmony.GetPatchInfo(method);
             if (info is not null && info.Prefixes.Any(patch => string.Equals(patch.owner, ours, StringComparison.Ordinal)))
                 attached++;
+            else unresolved.Add(typeName);
         }
         if (attached == 0)
             Log.Warning("[TurboTick] 通用 gizmo 捕获没有挂上任何入口，物品/属性同步不会生效。");
         else
             Log.Message($"[TurboTick] 通用 gizmo 捕获已挂载 {attached} 个 ProcessInput 入口。");
+        // A type that no longer resolves (renamed, made abstract, turned into a nested class) used to be
+        // skipped silently, so the only symptom was "this one gizmo does not sync on the other side".
+        if (unresolved.Count > 0)
+            Log.Warning("[TurboTick] 以下 gizmo 类型没有可挂载的 ProcessInput（原版改名或改成嵌套类型）："
+                + string.Join(", ", unresolved));
+        ReportFloatMenuHook(ours);
     }
 
-    private static readonly string[] GizmoTypes =
-    [
-        "Verse.Command", "Verse.Command_Action", "Verse.Command_Toggle", "Verse.Command_Target",
-        "Verse.Command_VerbTarget", "Verse.Command_SetBedOwnerType", "Verse.Command_SetPlantToGrow",
-        "RimWorld.Command_Ability", "RimWorld.Command_Ritual", "RimWorld.Command_BestowerCeremony",
-        "RimWorld.Command_CallBossgroup", "RimWorld.Command_SetNeuralSuperchargerAutoUse",
-        "RimWorld.Command_SetTargetFuelLevel", "RimWorld.Command_LoadToTransporter",
-        "RimWorld.Command_GroupedTempChange",
-    ];
+    /// <summary>Confirms the right-click chokepoint is attached.
+    ///
+    /// <para>Same reasoning as <see cref="ReportGizmoHooks"/>: the click cannot be synthesised headlessly, and a patch that
+    /// silently failed to install is indistinguishable from "the player has not right-clicked yet". The method is named
+    /// with an explicit signature because `FloatMenuOption` declares two `Chosen` overloads - the no-argument one on
+    /// `FloatMenuGridOption` (`:179121`) and the two-argument one on `FloatMenuOption` (`:179550`) - and patching by name
+    /// alone would be ambiguous.</para></summary>
+    private static void ReportFloatMenuHook(string ours)
+    {
+        var method = AccessTools.Method(typeof(FloatMenuOption), nameof(FloatMenuOption.Chosen),
+            [typeof(bool), typeof(FloatMenu)]);
+        if (method is null)
+        {
+            Log.Warning("[TurboTick] FloatMenuOption.Chosen(bool, FloatMenu) 不存在，右键菜单捕获无法挂载。");
+            return;
+        }
+        var info = Harmony.GetPatchInfo(method);
+        if (info is not null && info.Prefixes.Any(patch => string.Equals(patch.owner, ours, StringComparison.Ordinal)))
+            Log.Message("[TurboTick] 右键菜单捕获已挂载 FloatMenuOption.Chosen（选中对象 + revalidateClickTarget 采样）。");
+        else
+            Log.Warning("[TurboTick] 右键菜单捕获没有挂上 FloatMenuOption.Chosen，右键下单不会同步。");
+    }
 }

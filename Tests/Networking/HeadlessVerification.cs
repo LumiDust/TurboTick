@@ -14,6 +14,7 @@ internal static class HeadlessVerification
         await check("resident startup restoration waits for matching fresh progress and rejects earlier epochs", () => VerifyRestoreAsync(root));
         await check("archive reset clears resident identity and progress so the runtime can reconnect", () => VerifyResetAsync(root));
         await check("joining a resident world rebases all replicas on one canonical checkpoint and retains the delta", () => VerifyCanonicalJoinAsync(root));
+        await check("a room with no replica attached holds the timeline and resumes when one arrives", () => VerifyAudienceAsync(root));
     }
 
     private static ClientHello Hello(string name = "Player") => new(name, "1.7.4910", "headless-test-hash");
@@ -331,6 +332,46 @@ internal static class HeadlessVerification
         var error = JsonSerializer.Deserialize<JsonElement>(response);
         Assert(error.GetProperty("type").GetString() == "Error" && error.GetProperty("fatal").GetBoolean(), "Forged admission did not fail fatally.");
         return error.GetProperty("code").GetString();
+    }
+
+    /// <summary>A dedicated room must not invent a colony while nobody is watching it. The resident is a peer,
+    /// not an audience: with `PauseWithoutReplicas` on, the timeline holds at whatever tick it reached and resumes
+    /// at the operator's chosen speed the moment a display replica joins.</summary>
+    private static async Task VerifyAudienceAsync(string root)
+    {
+        await using var server = new DedicatedServer(Options(root, "headless-audience") with { PauseWithoutReplicas = true });
+        await server.StartAsync();
+        await using var host = new DedicatedClient();
+        await host.ConnectAsync("127.0.0.1", server.Port, Hello("Host"));
+        await host.ClaimHostAsync();
+        var world = "audience hold world"u8.ToArray();
+        await host.UploadWorldAsync(SnapshotBuilder.Describe(world), new MemoryStream(world));
+        await host.StartGameAsync();
+        var epoch = server.Epoch;
+        await using var simulation = new DedicatedClient();
+        var caughtUp = new TaskCompletionSource<SessionInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
+        simulation.WorldStarted += (session, _) => caughtUp.TrySetResult(session);
+        await server.ConnectSimulationAsync(simulation, Hello("Simulation"));
+        await caughtUp.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert(server.DisplayReplicaCount == 1 && !server.HeldForAudience, "A room with an attached replica claimed to be holding.");
+
+        // The only audience leaves. The simulation peer keeps reporting progress, so a clock that still advanced
+        // could only be doing it because it ignored the empty audience.
+        await host.DisconnectAsync();
+        await Until(() => server.DisplayReplicaCount == 0);
+        var held = server.Tick;
+        server.ReportSimulationProgress(epoch, held + 500, true);
+        await StableTick(server, held, "An empty room advanced without an audience.");
+        Assert(server.HeldForAudience, "An empty room did not report that it was holding for an audience.");
+        Assert(server.CurrentPolicy.TimeSpeed == 1, "Holding for an audience rewrote the operator's speed policy.");
+
+        await using var returning = new DedicatedClient();
+        await returning.ConnectAsync("127.0.0.1", server.Port, Hello("Returning"));
+        await Until(() => server.DisplayReplicaCount == 1);
+        server.ReportSimulationProgress(epoch, held + 500, true);
+        await Until(() => server.Tick > held + 3);
+        Assert(!server.HeldForAudience, "A room with an audience still reported holding.");
+        Assert(server.CurrentPolicy.TimeSpeed == 1, "Resuming after an audience arrived changed the speed policy.");
     }
 
     private static async Task StableTick(DedicatedServer server, int expected, string failure)
